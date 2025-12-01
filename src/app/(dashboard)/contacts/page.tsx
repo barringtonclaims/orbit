@@ -13,6 +13,7 @@ export const metadata = {
 };
 
 export default async function ContactsPage() {
+  // Fetch contacts with relations
   const { data: contacts, error } = await getContacts();
 
   if (error || !contacts) {
@@ -91,6 +92,7 @@ export default async function ContactsPage() {
           {contacts.map((contact) => {
             const fullName = `${contact.firstName} ${contact.lastName}`;
             const initials = `${contact.firstName[0]}${contact.lastName[0]}`.toUpperCase();
+            // Ensure we handle potentially undefined tasks array
             const nextTask = contact.tasks?.[0];
             const isOverdue = nextTask && isPast(new Date(nextTask.dueDate)) && !isToday(new Date(nextTask.dueDate));
 
