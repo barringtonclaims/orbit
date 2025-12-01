@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
 import { generateTaskTitle } from "@/lib/scheduling";
+import { Prisma } from "@prisma/client";
 
 export interface CreateContactInput {
   firstName: string;
@@ -17,6 +18,33 @@ export interface CreateContactInput {
   source?: string;
   notes?: string;
 }
+
+// Define the return type with relations
+export type ContactWithRelations = Prisma.ContactGetPayload<{
+  include: {
+    stage: true;
+    assignedTo: {
+      select: {
+        id: true;
+        fullName: true;
+        avatarUrl: true;
+      };
+    };
+    tasks: {
+      where: {
+        status: { in: ["PENDING", "IN_PROGRESS"] };
+      };
+      orderBy: { dueDate: "asc" };
+      take: 1;
+    };
+    _count: {
+      select: {
+        timeline: true;
+        files: true;
+      };
+    };
+  };
+}>;
 
 export async function createContact(input: CreateContactInput) {
   const supabase = await createClient();
@@ -124,7 +152,6 @@ export async function createContact(input: CreateContactInput) {
     });
 
     // Create initial task for follow-up
-    // REQUIRED: First message task is due TODAY immediately
     const today = new Date();
     const contactName = `${input.firstName} ${input.lastName}`;
     
@@ -154,7 +181,7 @@ export async function getContacts(options?: {
   search?: string;
   stageId?: string;
   assignedToId?: string;
-}) {
+}): Promise<{ data: ContactWithRelations[]; error?: string }> {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   
