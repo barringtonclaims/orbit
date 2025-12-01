@@ -5,6 +5,27 @@ import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
 import { startOfDay, endOfDay } from "date-fns";
 import { getNextOfficeDay, generateTaskTitle } from "@/lib/scheduling";
+import { Prisma } from "@prisma/client";
+
+export type TaskWithContact = Prisma.TaskGetPayload<{
+  include: {
+    contact: {
+      select: {
+        id: true;
+        firstName: true,
+        lastName: true,
+        phone: true,
+        email: true,
+        stage: {
+          select: {
+            name: true,
+            color: true,
+          },
+        },
+      },
+    },
+  },
+}>;
 
 export async function getTasks(options?: {
   view?: "today" | "upcoming" | "overdue" | "completed";
@@ -79,7 +100,7 @@ export async function getTasks(options?: {
       orderBy: { dueDate: "asc" },
     });
 
-    return { data: tasks };
+    return { data: tasks as TaskWithContact[] };
   } catch (error) {
     console.error("Error fetching tasks:", error);
     return { error: "Failed to fetch tasks", data: [] };
