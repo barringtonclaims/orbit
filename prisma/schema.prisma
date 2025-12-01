@@ -1,0 +1,279 @@
+// Orbit CRM Database Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================
+// USER & ORGANIZATION MODELS
+// ============================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  fullName      String
+  avatarUrl     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  memberships   OrganizationMember[]
+  assignedContacts Contact[] @relation("AssignedTo")
+  createdContacts  Contact[] @relation("CreatedBy")
+  tasks         Task[]
+  notes         Note[]
+
+  @@map("users")
+}
+
+model Organization {
+  id          String    @id @default(uuid())
+  name        String
+  slug        String    @unique
+  logoUrl     String?
+  officeDays     Int[]     @default([1, 3, 5]) // 1=Mon, 3=Wed, 5=Fri
+  inspectionDays Int[]     @default([2, 4])    // 2=Tue, 4=Thu
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  members     OrganizationMember[]
+  contacts    Contact[]
+  leadStages  LeadStage[]
+  messageTemplates MessageTemplate[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String   @id @default(uuid())
+  userId         String
+  organizationId String
+  role           MemberRole @default(MEMBER)
+  joinedAt       DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@map("organization_members")
+}
+
+enum MemberRole {
+  OWNER
+  MANAGER
+  MEMBER
+}
+
+// ============================================
+// CONTACT & LEAD MODELS
+// ============================================
+
+model Contact {
+  id             String    @id @default(uuid())
+  organizationId String
+  assignedToId   String?
+  createdById    String
+
+  // Contact Info
+  firstName      String
+  lastName       String
+  email          String?
+  phone          String?
+  address        String?
+  city           String?
+  state          String?
+  zipCode        String?
+
+  // Lead Status
+  stageId        String?
+  stageOrder     Int       @default(0)
+  
+  // Metadata
+  source         String?   // Where the lead came from
+  notes          String?   // Initial notes about the lead
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedTo     User?        @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy      User         @relation("CreatedBy", fields: [createdById], references: [id])
+  stage          LeadStage?   @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  tasks          Task[]
+  timeline       Note[]
+  files          ContactFile[]
+
+  @@index([organizationId])
+  @@index([assignedToId])
+  @@index([stageId])
+  @@map("contacts")
+}
+
+model LeadStage {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  description    String?
+  color          String   @default("#6366f1") // Indigo default
+  order          Int
+  isTerminal     Boolean  @default(false) // True for Approved, Not Interested, Seasonal
+  stageType      StageType @default(ACTIVE)
+  createdAt      DateTime @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts       Contact[]
+
+  @@unique([organizationId, name])
+  @@map("lead_stages")
+}
+
+enum StageType {
+  ACTIVE          // Normal active stages
+  APPROVED        // Won/Closed
+  SEASONAL        // Seasonal follow-up
+  NOT_INTERESTED  // Lost/Not interested
+}
+
+// ============================================
+// TASK & FOLLOW-UP MODELS
+// ============================================
+
+model Task {
+  id          String     @id @default(uuid())
+  contactId   String
+  userId      String
+  
+  title       String
+  description String?
+  dueDate     DateTime
+  completedAt DateTime?
+  status      TaskStatus @default(PENDING)
+  taskType    TaskType   @default(FOLLOW_UP)
+  
+  // For appointments
+  appointmentTime DateTime?
+  calendarEventId String?
+  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  contact     Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  user        User       @relation(fields: [userId], references: [id])
+
+  @@index([contactId])
+  @@index([userId])
+  @@index([dueDate])
+  @@index([status])
+  @@map("tasks")
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskType {
+  FOLLOW_UP
+  FIRST_MESSAGE
+  SET_APPOINTMENT
+  APPOINTMENT
+  WRITE_QUOTE
+  SEND_QUOTE
+  CLAIM_RECOMMENDATION
+  CUSTOM
+}
+
+// ============================================
+// NOTES & TIMELINE
+// ============================================
+
+model Note {
+  id        String   @id @default(uuid())
+  contactId String
+  userId    String
+  
+  content   String
+  noteType  NoteType @default(NOTE)
+  metadata  Json?    // For storing additional info like email details, SMS templates used, etc.
+  
+  createdAt DateTime @default(now())
+
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([contactId])
+  @@map("notes")
+}
+
+enum NoteType {
+  NOTE
+  EMAIL_SENT
+  SMS_SENT
+  STAGE_CHANGE
+  TASK_COMPLETED
+  APPOINTMENT_SCHEDULED
+  FILE_UPLOADED
+  SYSTEM
+}
+
+// ============================================
+// FILES & ATTACHMENTS
+// ============================================
+
+model ContactFile {
+  id        String   @id @default(uuid())
+  contactId String
+  
+  fileName  String
+  fileUrl   String
+  fileType  FileType
+  fileSize  Int      // in bytes
+  mimeType  String?
+  
+  createdAt DateTime @default(now())
+
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@map("contact_files")
+}
+
+enum FileType {
+  PHOTO
+  DOCUMENT
+}
+
+// ============================================
+// MESSAGE TEMPLATES
+// ============================================
+
+model MessageTemplate {
+  id             String      @id @default(uuid())
+  organizationId String
+  
+  name           String
+  body           String
+  templateType   TemplateType
+  category       String?     // e.g., "First Contact", "Follow Up", "Quote"
+  isDefault      Boolean     @default(false)
+  
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("message_templates")
+}
+
+enum TemplateType {
+  SMS
+  EMAIL
+}
