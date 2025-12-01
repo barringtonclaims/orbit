@@ -15,6 +15,32 @@ export const metadata = {
 export default async function ContactsPage() {
   const { data: contacts, error } = await getContacts();
 
+  if (error || !contacts) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold">Contacts</h1>
+            <p className="text-muted-foreground mt-1">
+              Manage your leads and customers
+            </p>
+          </div>
+          <Link href="/contacts/new">
+            <Button className="gap-2">
+              <Plus className="w-4 h-4" />
+              Add Contact
+            </Button>
+          </Link>
+        </div>
+        <Card className="p-8">
+          <div className="text-center text-destructive">
+            <p>{error || "Failed to load contacts"}</p>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -42,13 +68,7 @@ export default async function ContactsPage() {
       </div>
 
       {/* Contacts List */}
-      {error ? (
-        <Card className="p-8">
-          <div className="text-center text-destructive">
-            <p>{error}</p>
-          </div>
-        </Card>
-      ) : contacts.length === 0 ? (
+      {contacts.length === 0 ? (
         <Card className="p-12">
           <div className="text-center">
             <div className="w-16 h-16 rounded-full bg-muted mx-auto flex items-center justify-center mb-4">
@@ -71,7 +91,7 @@ export default async function ContactsPage() {
           {contacts.map((contact) => {
             const fullName = `${contact.firstName} ${contact.lastName}`;
             const initials = `${contact.firstName[0]}${contact.lastName[0]}`.toUpperCase();
-            const nextTask = contact.tasks[0];
+            const nextTask = contact.tasks?.[0];
             const isOverdue = nextTask && isPast(new Date(nextTask.dueDate)) && !isToday(new Date(nextTask.dueDate));
 
             return (
