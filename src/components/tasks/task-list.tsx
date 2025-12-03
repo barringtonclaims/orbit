@@ -110,6 +110,13 @@ const autoRescheduleTypes = [
   "CLAIM_FOLLOW_UP",
 ];
 
+// Task types that should complete directly without showing dialog
+const quickCompleteTypes = [
+  "FIRST_MESSAGE",
+  "FIRST_MESSAGE_FOLLOW_UP",
+  "APPOINTMENT_REMINDER",
+];
+
 export function TaskList({ tasks, emptyMessage, showContactLink = true, showSectionHeader = true }: TaskListProps) {
   const router = useRouter();
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
@@ -125,10 +132,16 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
   } | null>(null);
 
   const handleCompleteClick = (task: Task) => {
-    // For auto-reschedule types, complete directly
+    // For auto-reschedule types, complete and reschedule
     if (autoRescheduleTypes.includes(task.taskType)) {
       handleQuickComplete(task, true);
-    } else {
+    } 
+    // For quick complete types, just complete without dialog
+    else if (quickCompleteTypes.includes(task.taskType)) {
+      handleQuickComplete(task, false);
+    } 
+    // For other types, show dialog
+    else {
       setCompletingTask(task);
       setShowCompleteDialog(true);
     }
