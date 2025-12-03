@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
-import { generateTaskTitle } from "@/lib/scheduling";
+import { generateTaskTitle, getActionButtonForTaskType } from "@/lib/scheduling";
 import { Prisma } from "@prisma/client";
+import { createDefaultStages } from "./stages";
 
 export interface CreateContactInput {
   firstName: string;
@@ -17,6 +18,22 @@ export interface CreateContactInput {
   zipCode?: string;
   source?: string;
   notes?: string;
+}
+
+export interface UpdateContactInput extends Partial<CreateContactInput> {
+  // Claim-specific fields
+  carrier?: string;
+  dateOfLoss?: Date | string;
+  policyNumber?: string;
+  claimNumber?: string;
+  // Retail fields
+  quoteType?: string;
+  // Job tracking
+  jobStatus?: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED";
+  jobScheduledDate?: Date | string;
+  jobCompletedDate?: Date | string;
+  // Seasonal
+  seasonalReminderDate?: Date | string;
 }
 
 // Define the return type with relations
@@ -112,7 +129,7 @@ export async function createContact(input: CreateContactInput) {
       organizationId = newOrg.id;
     }
 
-    // Get default stage
+    // Get default stage (New Lead)
     const defaultStage = await prisma.leadStage.findFirst({
       where: {
         organizationId: organizationId,
@@ -151,9 +168,10 @@ export async function createContact(input: CreateContactInput) {
       },
     });
 
-    // Create initial task for follow-up
+    // Create initial task for first message
     const today = new Date();
     const contactName = `${input.firstName} ${input.lastName}`;
+    const actionButton = getActionButtonForTaskType("FIRST_MESSAGE");
     
     await prisma.task.create({
       data: {
@@ -163,6 +181,7 @@ export async function createContact(input: CreateContactInput) {
         dueDate: today,
         status: "PENDING",
         taskType: "FIRST_MESSAGE",
+        actionButton: actionButton as "SEND_FIRST_MESSAGE" | "SCHEDULE_INSPECTION" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "UPLOAD_PA" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | null,
       },
     });
 
@@ -181,6 +200,7 @@ export async function getContacts(options?: {
   search?: string;
   stageId?: string;
   assignedToId?: string;
+  stageType?: string;
 }): Promise<{ data: ContactWithRelations[]; error?: string }> {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -200,12 +220,7 @@ export async function getContacts(options?: {
         return { data: [] };
     }
 
-    const where: {
-      organizationId: string;
-      OR?: { firstName: { contains: string; mode: "insensitive" } } | { lastName: { contains: string; mode: "insensitive" } } | { email: { contains: string; mode: "insensitive" } }[];
-      stageId?: string;
-      assignedToId?: string;
-    } = {
+    const where: Prisma.ContactWhereInput = {
       organizationId: membership.organizationId,
     };
 
@@ -214,11 +229,16 @@ export async function getContacts(options?: {
         { firstName: { contains: options.search, mode: "insensitive" } },
         { lastName: { contains: options.search, mode: "insensitive" } },
         { email: { contains: options.search, mode: "insensitive" } },
+        { phone: { contains: options.search } },
       ];
     }
 
     if (options?.stageId) {
       where.stageId = options.stageId;
+    }
+
+    if (options?.stageType) {
+      where.stage = { stageType: options.stageType as Prisma.EnumStageTypeFilter["equals"] };
     }
 
     // For non-manager members, only show their assigned contacts
@@ -291,7 +311,7 @@ export async function getContact(id: string) {
           },
         },
         tasks: {
-          orderBy: { dueDate: "desc" },
+          orderBy: { createdAt: "desc" },
           include: {
             user: {
               select: {
@@ -330,7 +350,7 @@ export async function getContact(id: string) {
   }
 }
 
-export async function updateContact(id: string, input: Partial<CreateContactInput>) {
+export async function updateContact(id: string, input: UpdateContactInput) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   
@@ -339,11 +359,31 @@ export async function updateContact(id: string, input: Partial<CreateContactInpu
   }
 
   try {
+    // Process date fields
+    const data: Prisma.ContactUpdateInput = {
+      ...input,
+      updatedAt: new Date(),
+    };
+
+    // Convert string dates to Date objects
+    if (input.dateOfLoss) {
+      data.dateOfLoss = new Date(input.dateOfLoss);
+    }
+    if (input.jobScheduledDate) {
+      data.jobScheduledDate = new Date(input.jobScheduledDate);
+    }
+    if (input.jobCompletedDate) {
+      data.jobCompletedDate = new Date(input.jobCompletedDate);
+    }
+    if (input.seasonalReminderDate) {
+      data.seasonalReminderDate = new Date(input.seasonalReminderDate);
+    }
+
     const contact = await prisma.contact.update({
       where: { id },
-      data: {
-        ...input,
-        updatedAt: new Date(),
+      data,
+      include: {
+        stage: true,
       },
     });
 
@@ -381,7 +421,7 @@ export async function deleteContact(id: string) {
   }
 }
 
-export async function addNote(contactId: string, content: string) {
+export async function addNote(contactId: string, content: string, noteType: string = "NOTE") {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   
@@ -395,7 +435,7 @@ export async function addNote(contactId: string, content: string) {
         contactId,
         userId: user.id,
         content,
-        noteType: "NOTE",
+        noteType: noteType as "NOTE" | "EMAIL_SENT" | "SMS_SENT" | "STAGE_CHANGE" | "TASK_COMPLETED" | "APPOINTMENT_SCHEDULED" | "APPOINTMENT_COMPLETED" | "FILE_UPLOADED" | "PA_UPLOADED" | "QUOTE_SENT" | "CLAIM_REC_SENT" | "JOB_STATUS_CHANGE" | "SYSTEM",
       },
       include: {
         user: {
@@ -423,28 +463,50 @@ export async function addNote(contactId: string, content: string) {
   }
 }
 
-// Helper function to create default lead stages
-async function createDefaultStages(organizationId: string) {
-  const defaultStages = [
-    { name: "New Lead", color: "#6366f1", order: 0, stageType: "ACTIVE" as const },
-    { name: "First Contact", color: "#8b5cf6", order: 1, stageType: "ACTIVE" as const },
-    { name: "Inspection Scheduled", color: "#14b8a6", order: 2, stageType: "ACTIVE" as const },
-    { name: "Quote Sent", color: "#f59e0b", order: 3, stageType: "ACTIVE" as const },
-    { name: "Approved", color: "#22c55e", order: 4, stageType: "APPROVED" as const, isTerminal: true },
-    { name: "Seasonal Follow-up", color: "#06b6d4", order: 5, stageType: "SEASONAL" as const, isTerminal: true },
-    { name: "Not Interested", color: "#ef4444", order: 6, stageType: "NOT_INTERESTED" as const, isTerminal: true },
-  ];
-
-  const stages = [];
-  for (const stageData of defaultStages) {
-    const stage = await prisma.leadStage.create({
-      data: {
-        ...stageData,
-        organizationId,
-      },
-    });
-    stages.push(stage);
+// Get contacts needing seasonal follow-up (for spring reminder cron job)
+export async function getSeasonalContacts() {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized", data: [] };
   }
 
-  return stages;
+  try {
+    const membership = await prisma.organizationMember.findFirst({
+      where: { userId: user.id },
+    });
+
+    if (!membership) {
+      return { data: [] };
+    }
+
+    const today = new Date();
+    
+    const contacts = await prisma.contact.findMany({
+      where: {
+        organizationId: membership.organizationId,
+        stage: {
+          stageType: "SEASONAL",
+        },
+        seasonalReminderDate: {
+          lte: today,
+        },
+      },
+      include: {
+        stage: true,
+        assignedTo: {
+          select: {
+            id: true,
+            fullName: true,
+          },
+        },
+      },
+    });
+
+    return { data: contacts };
+  } catch (error) {
+    console.error("Error fetching seasonal contacts:", error);
+    return { error: "Failed to fetch seasonal contacts", data: [] };
+  }
 }

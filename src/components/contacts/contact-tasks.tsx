@@ -31,6 +31,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
 import { completeTask, createTask, updateTask } from "@/lib/actions/tasks";
+import { type TaskTypeForTitle } from "@/lib/scheduling";
 import { getNextOfficeDay } from "@/lib/scheduling";
 import { format, formatDistanceToNow, isPast, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -92,7 +93,7 @@ export function ContactTasks({ contactId, tasks }: ContactTasksProps) {
   
   // New task form state
   const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [newTaskType, setNewTaskType] = useState("FOLLOW_UP");
+  const [newTaskType, setNewTaskType] = useState<TaskTypeForTitle>("FOLLOW_UP");
   const [newTaskDate, setNewTaskDate] = useState<Date | undefined>(new Date());
 
   // Edit task form state
@@ -123,7 +124,10 @@ export function ContactTasks({ contactId, tasks }: ContactTasksProps) {
     setIsSubmitting(true);
 
     try {
-      const result = await completeTask(completingTaskId, nextTaskType === "NONE" ? undefined : nextTaskType);
+      const options = nextTaskType === "NONE" 
+        ? undefined 
+        : { nextTaskType: nextTaskType as TaskTypeForTitle };
+      const result = await completeTask(completingTaskId, options);
 
       if (result.error) {
         toast.error(result.error);
@@ -396,7 +400,7 @@ export function ContactTasks({ contactId, tasks }: ContactTasksProps) {
 
             <div className="space-y-2">
               <Label>Task Type</Label>
-              <Select value={newTaskType} onValueChange={setNewTaskType}>
+              <Select value={newTaskType} onValueChange={(value) => setNewTaskType(value as TaskTypeForTitle)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

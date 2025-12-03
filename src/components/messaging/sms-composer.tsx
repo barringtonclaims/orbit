@@ -75,7 +75,7 @@ export function SMSComposer({
 
   useEffect(() => {
     async function loadTemplates() {
-      const { data } = await getTemplates("SMS");
+      const { data } = await getTemplates({ templateType: "SMS" });
       if (data) {
         setTemplates(data);
         // Auto-select default template

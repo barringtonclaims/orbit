@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
+import { STAGE_NAMES } from "@/types";
 
 export async function getLeadStages(organizationId?: string) {
   const supabase = await createClient();
@@ -36,6 +37,38 @@ export async function getLeadStages(organizationId?: string) {
   }
 }
 
+export async function getStageByName(stageName: string, organizationId?: string) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized", data: null };
+  }
+
+  try {
+    const membership = await prisma.organizationMember.findFirst({
+      where: { userId: user.id },
+    });
+
+    const orgId = organizationId || membership?.organizationId;
+    if (!orgId) {
+      return { error: "No organization found", data: null };
+    }
+
+    const stage = await prisma.leadStage.findFirst({
+      where: { 
+        organizationId: orgId,
+        name: stageName,
+      },
+    });
+
+    return { data: stage };
+  } catch (error) {
+    console.error("Error fetching stage by name:", error);
+    return { error: "Failed to fetch stage", data: null };
+  }
+}
+
 export async function updateContactStage(contactId: string, stageId: string) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -52,6 +85,12 @@ export async function updateContactStage(contactId: string, stageId: string) {
     if (!stage) {
       return { error: "Stage not found" };
     }
+
+    // Get the previous stage for the timeline entry
+    const previousContact = await prisma.contact.findUnique({
+      where: { id: contactId },
+      include: { stage: true },
+    });
 
     const contact = await prisma.contact.update({
       where: { id: contactId },
@@ -70,12 +109,13 @@ export async function updateContactStage(contactId: string, stageId: string) {
       data: {
         contactId,
         userId: user.id,
-        content: `Stage changed to "${stage.name}"`,
+        content: `Stage changed from "${previousContact?.stage?.name || 'None'}" to "${stage.name}"`,
         noteType: "STAGE_CHANGE",
         metadata: {
-          fromStageId: contact.stageId,
+          fromStageId: previousContact?.stageId,
+          fromStageName: previousContact?.stage?.name,
           toStageId: stageId,
-          stageName: stage.name,
+          toStageName: stage.name,
         },
       },
     });
@@ -83,6 +123,7 @@ export async function updateContactStage(contactId: string, stageId: string) {
     revalidatePath(`/contacts/${contactId}`);
     revalidatePath("/contacts");
     revalidatePath("/dashboard");
+    revalidatePath("/tasks");
 
     return { data: contact };
   } catch (error) {
@@ -96,6 +137,7 @@ export async function createLeadStage(input: {
   color: string;
   description?: string;
   stageType: "ACTIVE" | "APPROVED" | "SEASONAL" | "NOT_INTERESTED";
+  workflowType?: "RETAIL" | "CLAIM" | "BOTH" | "TERMINAL";
   isTerminal?: boolean;
 }) {
   const supabase = await createClient();
@@ -125,6 +167,7 @@ export async function createLeadStage(input: {
         color: input.color,
         description: input.description,
         stageType: input.stageType,
+        workflowType: input.workflowType || "BOTH",
         isTerminal: input.isTerminal || input.stageType !== "ACTIVE",
         order: (lastStage?.order || 0) + 1,
       },
@@ -139,16 +182,147 @@ export async function createLeadStage(input: {
   }
 }
 
-// Helper function to create default lead stages
-async function createDefaultStages(organizationId: string) {
+/**
+ * Reset stages to the correct roofing workflow defaults
+ * This will delete all existing stages and recreate them
+ */
+export async function resetStagesToDefaults() {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized" };
+  }
+
+  try {
+    const membership = await prisma.organizationMember.findFirst({
+      where: { userId: user.id },
+    });
+
+    if (!membership) {
+      return { error: "No organization found" };
+    }
+
+    const orgId = membership.organizationId;
+
+    // First, unset stageId from all contacts in this org (so we can delete stages)
+    await prisma.contact.updateMany({
+      where: { organizationId: orgId },
+      data: { stageId: null },
+    });
+
+    // Delete all existing stages for this organization
+    await prisma.leadStage.deleteMany({
+      where: { organizationId: orgId },
+    });
+
+    // Create the correct default stages
+    const stages = await createDefaultStages(orgId);
+
+    // Re-assign contacts to New Lead stage
+    const newLeadStage = stages.find(s => s.name === STAGE_NAMES.NEW_LEAD);
+    if (newLeadStage) {
+      await prisma.contact.updateMany({
+        where: { 
+          organizationId: orgId,
+          stageId: null,
+        },
+        data: { 
+          stageId: newLeadStage.id,
+          stageOrder: newLeadStage.order,
+        },
+      });
+    }
+
+    return { success: true, stages };
+  } catch (error) {
+    console.error("Error resetting stages:", error);
+    return { error: "Failed to reset stages" };
+  }
+}
+
+// Helper function to create default lead stages for roofing workflow
+export async function createDefaultStages(organizationId: string) {
   const defaultStages = [
-    { name: "New Lead", color: "#6366f1", order: 0, stageType: "ACTIVE" as const, isTerminal: false },
-    { name: "First Contact", color: "#8b5cf6", order: 1, stageType: "ACTIVE" as const, isTerminal: false },
-    { name: "Inspection Scheduled", color: "#14b8a6", order: 2, stageType: "ACTIVE" as const, isTerminal: false },
-    { name: "Quote Sent", color: "#f59e0b", order: 3, stageType: "ACTIVE" as const, isTerminal: false },
-    { name: "Approved", color: "#22c55e", order: 4, stageType: "APPROVED" as const, isTerminal: true },
-    { name: "Seasonal Follow-up", color: "#06b6d4", order: 5, stageType: "SEASONAL" as const, isTerminal: true },
-    { name: "Not Interested", color: "#ef4444", order: 6, stageType: "NOT_INTERESTED" as const, isTerminal: true },
+    // Initial stages (shared)
+    { 
+      name: STAGE_NAMES.NEW_LEAD, 
+      color: "#6366f1", // Indigo
+      order: 0, 
+      stageType: "ACTIVE" as const, 
+      workflowType: "BOTH" as const,
+      isTerminal: false,
+      description: "New lead - needs first contact"
+    },
+    { 
+      name: STAGE_NAMES.SCHEDULED_INSPECTION, 
+      color: "#14b8a6", // Teal
+      order: 1, 
+      stageType: "ACTIVE" as const, 
+      workflowType: "BOTH" as const,
+      isTerminal: false,
+      description: "Initial inspection scheduled"
+    },
+    
+    // Retail path
+    { 
+      name: STAGE_NAMES.RETAIL_PROSPECT, 
+      color: "#f59e0b", // Amber
+      order: 2, 
+      stageType: "ACTIVE" as const, 
+      workflowType: "RETAIL" as const,
+      isTerminal: false,
+      description: "Retail prospect - quote in progress"
+    },
+    
+    // Claim path
+    { 
+      name: STAGE_NAMES.CLAIM_PROSPECT, 
+      color: "#8b5cf6", // Purple
+      order: 3, 
+      stageType: "ACTIVE" as const, 
+      workflowType: "CLAIM" as const,
+      isTerminal: false,
+      description: "Claim prospect - insurance claim in progress"
+    },
+    { 
+      name: STAGE_NAMES.OPEN_CLAIM, 
+      color: "#ec4899", // Pink
+      order: 4, 
+      stageType: "ACTIVE" as const, 
+      workflowType: "CLAIM" as const,
+      isTerminal: false,
+      description: "PA signed - claim open with insurance"
+    },
+    
+    // Terminal stages
+    { 
+      name: STAGE_NAMES.APPROVED, 
+      color: "#22c55e", // Green
+      order: 5, 
+      stageType: "APPROVED" as const, 
+      workflowType: "TERMINAL" as const,
+      isTerminal: true,
+      description: "Job approved - ready for scheduling"
+    },
+    { 
+      name: STAGE_NAMES.SEASONAL, 
+      color: "#06b6d4", // Cyan
+      order: 6, 
+      stageType: "SEASONAL" as const, 
+      workflowType: "TERMINAL" as const,
+      isTerminal: true,
+      description: "Follow up in spring"
+    },
+    { 
+      name: STAGE_NAMES.NOT_INTERESTED, 
+      color: "#ef4444", // Red
+      order: 7, 
+      stageType: "NOT_INTERESTED" as const, 
+      workflowType: "TERMINAL" as const,
+      isTerminal: true,
+      description: "Not interested / Lost"
+    },
   ];
 
   const stages = [];
@@ -164,4 +338,3 @@ async function createDefaultStages(organizationId: string) {
 
   return stages;
 }
-

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
 import { startOfDay, endOfDay } from "date-fns";
-import { getNextOfficeDay, generateTaskTitle } from "@/lib/scheduling";
+import { getNextOfficeDay, generateTaskTitle, getActionButtonForTaskType, type TaskTypeForTitle } from "@/lib/scheduling";
 import { Prisma } from "@prisma/client";
 
 export type TaskWithContact = Prisma.TaskGetPayload<{
@@ -12,24 +12,31 @@ export type TaskWithContact = Prisma.TaskGetPayload<{
     contact: {
       select: {
         id: true;
-        firstName: true,
-        lastName: true,
-        phone: true,
-        email: true,
+        firstName: true;
+        lastName: true;
+        phone: true;
+        email: true;
+        address: true;
+        carrier: true;
+        quoteType: true;
         stage: {
           select: {
-            name: true,
-            color: true,
-          },
-        },
-      },
-    },
-  },
+            id: true;
+            name: true;
+            color: true;
+            stageType: true;
+            workflowType: true;
+          };
+        };
+      };
+    };
+  };
 }>;
 
 export async function getTasks(options?: {
-  view?: "today" | "upcoming" | "overdue" | "completed";
+  view?: "today" | "upcoming" | "overdue" | "completed" | "all";
   contactId?: string;
+  taskType?: string;
 }) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -43,19 +50,16 @@ export async function getTasks(options?: {
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
 
-    type TaskWhere = {
-      userId?: string;
-      contactId?: string;
-      status?: { in: string[] } | string;
-      dueDate?: { gte: Date; lte: Date } | { lt: Date } | { gt: Date };
-    };
-    
-    const where: TaskWhere = {
+    const where: Prisma.TaskWhereInput = {
       userId: user.id,
     };
 
     if (options?.contactId) {
       where.contactId = options.contactId;
+    }
+
+    if (options?.taskType) {
+      where.taskType = options.taskType as Prisma.EnumTaskTypeFilter["equals"];
     }
 
     switch (options?.view) {
@@ -74,6 +78,9 @@ export async function getTasks(options?: {
       case "completed":
         where.status = "COMPLETED";
         break;
+      case "all":
+        // No status filter - show all
+        break;
       default:
         where.status = { in: ["PENDING", "IN_PROGRESS"] };
     }
@@ -88,16 +95,25 @@ export async function getTasks(options?: {
             lastName: true,
             phone: true,
             email: true,
+            address: true,
+            carrier: true,
+            quoteType: true,
             stage: {
               select: {
+                id: true,
                 name: true,
                 color: true,
+                stageType: true,
+                workflowType: true,
               },
             },
           },
         },
       },
-      orderBy: { dueDate: "asc" },
+      orderBy: [
+        { dueDate: "asc" },
+        { createdAt: "asc" },
+      ],
     });
 
     return { data: tasks as TaskWithContact[] };
@@ -144,14 +160,18 @@ export async function getTaskStats() {
       }),
     ]);
 
-    return { data: { today, upcoming, overdue } };
+    return { data: { today, upcoming, overdue, total: today + upcoming + overdue } };
   } catch (error) {
     console.error("Error fetching task stats:", error);
     return { error: "Failed to fetch task stats", data: null };
   }
 }
 
-export async function completeTask(taskId: string, nextTaskType?: string) {
+export async function completeTask(taskId: string, options?: {
+  reschedule?: boolean; // Whether to auto-reschedule to next office day
+  nextTaskType?: TaskTypeForTitle; // Specific task type for next task
+  notes?: string;
+}) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   
@@ -176,13 +196,13 @@ export async function completeTask(taskId: string, nextTaskType?: string) {
       data: {
         contactId: task.contactId,
         userId: user.id,
-        content: `Completed task: ${task.title}`,
+        content: `Completed task: ${task.title}${options?.notes ? `. ${options.notes}` : ''}`,
         noteType: "TASK_COMPLETED",
       },
     });
 
-    // Create next task if specified
-    if (nextTaskType && nextTaskType !== "NONE") {
+    // Handle auto-reschedule or next task creation
+    if (options?.reschedule || options?.nextTaskType) {
       const contactName = `${task.contact.firstName} ${task.contact.lastName}`;
       
       // Fetch org for scheduling settings
@@ -191,17 +211,23 @@ export async function completeTask(taskId: string, nextTaskType?: string) {
         include: { organization: true },
       });
       const officeDays = membership?.organization.officeDays || [1, 3, 5];
-      
       const nextDate = getNextOfficeDay(new Date(), officeDays);
+      
+      // Determine next task type - use provided or same as current
+      const nextTaskType = options.nextTaskType || task.taskType as TaskTypeForTitle;
+      const actionButton = getActionButtonForTaskType(nextTaskType);
       
       await prisma.task.create({
         data: {
           contactId: task.contactId,
           userId: user.id,
-          title: generateTaskTitle(contactName, nextTaskType as "SET_APPOINTMENT" | "APPOINTMENT" | "WRITE_QUOTE" | "SEND_QUOTE" | "FOLLOW_UP" | "FIRST_MESSAGE" | "CLAIM_RECOMMENDATION" | "CUSTOM"),
+          title: generateTaskTitle(contactName, nextTaskType, {
+            quoteType: task.contact.quoteType || undefined,
+          }),
           dueDate: nextDate,
           status: "PENDING",
-          taskType: nextTaskType as "SET_APPOINTMENT" | "APPOINTMENT" | "WRITE_QUOTE" | "SEND_QUOTE" | "FOLLOW_UP" | "FIRST_MESSAGE" | "CLAIM_RECOMMENDATION" | "CUSTOM",
+          taskType: nextTaskType,
+          actionButton: actionButton as "SEND_FIRST_MESSAGE" | "SCHEDULE_INSPECTION" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "UPLOAD_PA" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | null,
         },
       });
     }
@@ -219,7 +245,12 @@ export async function completeTask(taskId: string, nextTaskType?: string) {
 
 export async function updateTask(
   taskId: string, 
-  data: { title?: string; description?: string; dueDate?: Date }
+  data: { 
+    title?: string; 
+    description?: string; 
+    dueDate?: Date;
+    appointmentTime?: Date;
+  }
 ) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -240,6 +271,7 @@ export async function updateTask(
     revalidatePath("/tasks");
     revalidatePath("/dashboard");
     revalidatePath(`/contacts/${task.contactId}`);
+    revalidatePath("/calendar");
 
     return { data: task };
   } catch (error) {
@@ -261,12 +293,28 @@ export async function rescheduleTask(taskId: string, newDate: Date) {
       where: { id: taskId },
       data: {
         dueDate: newDate,
+        // Also update appointment time if this is an appointment task
+        appointmentTime: undefined, // Will be set separately if needed
+      },
+      include: {
+        contact: true,
+      },
+    });
+
+    // Add timeline entry
+    await prisma.note.create({
+      data: {
+        contactId: task.contactId,
+        userId: user.id,
+        content: `Task rescheduled to ${newDate.toLocaleDateString()}`,
+        noteType: "SYSTEM",
       },
     });
 
     revalidatePath("/tasks");
     revalidatePath("/dashboard");
     revalidatePath(`/contacts/${task.contactId}`);
+    revalidatePath("/calendar");
 
     return { data: task };
   } catch (error) {
@@ -280,7 +328,8 @@ export async function createTask(input: {
   title: string;
   description?: string;
   dueDate: Date;
-  taskType?: string;
+  taskType?: TaskTypeForTitle;
+  appointmentTime?: Date;
 }) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -290,6 +339,9 @@ export async function createTask(input: {
   }
 
   try {
+    const taskType = input.taskType || "CUSTOM";
+    const actionButton = getActionButtonForTaskType(taskType);
+    
     const task = await prisma.task.create({
       data: {
         contactId: input.contactId,
@@ -298,17 +350,118 @@ export async function createTask(input: {
         description: input.description,
         dueDate: input.dueDate,
         status: "PENDING",
-        taskType: (input.taskType as "SET_APPOINTMENT" | "APPOINTMENT" | "WRITE_QUOTE" | "SEND_QUOTE" | "FOLLOW_UP" | "FIRST_MESSAGE" | "CLAIM_RECOMMENDATION" | "CUSTOM") || "CUSTOM",
+        taskType: taskType,
+        actionButton: actionButton as "SEND_FIRST_MESSAGE" | "SCHEDULE_INSPECTION" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "UPLOAD_PA" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | null,
+        appointmentTime: input.appointmentTime,
       },
     });
 
     revalidatePath("/tasks");
     revalidatePath("/dashboard");
     revalidatePath(`/contacts/${input.contactId}`);
+    revalidatePath("/calendar");
 
     return { data: task };
   } catch (error) {
     console.error("Error creating task:", error);
     return { error: "Failed to create task" };
+  }
+}
+
+export async function cancelTask(taskId: string, reason?: string) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized" };
+  }
+
+  try {
+    const task = await prisma.task.update({
+      where: { id: taskId },
+      data: {
+        status: "CANCELLED",
+        updatedAt: new Date(),
+      },
+      include: {
+        contact: true,
+      },
+    });
+
+    // Add timeline entry
+    await prisma.note.create({
+      data: {
+        contactId: task.contactId,
+        userId: user.id,
+        content: `Task cancelled: ${task.title}${reason ? `. Reason: ${reason}` : ''}`,
+        noteType: "SYSTEM",
+      },
+    });
+
+    revalidatePath("/tasks");
+    revalidatePath("/dashboard");
+    revalidatePath(`/contacts/${task.contactId}`);
+
+    return { data: task };
+  } catch (error) {
+    console.error("Error cancelling task:", error);
+    return { error: "Failed to cancel task" };
+  }
+}
+
+// Get tasks that are appointments (for calendar view)
+export async function getAppointments(options?: {
+  startDate?: Date;
+  endDate?: Date;
+}) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized", data: [] };
+  }
+
+  try {
+    const where: Prisma.TaskWhereInput = {
+      userId: user.id,
+      taskType: "APPOINTMENT",
+      status: { in: ["PENDING", "IN_PROGRESS"] },
+    };
+
+    if (options?.startDate || options?.endDate) {
+      where.appointmentTime = {};
+      if (options.startDate) (where.appointmentTime as Prisma.DateTimeNullableFilter).gte = options.startDate;
+      if (options.endDate) (where.appointmentTime as Prisma.DateTimeNullableFilter).lte = options.endDate;
+    }
+
+    const appointments = await prisma.task.findMany({
+      where,
+      include: {
+        contact: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            phone: true,
+            email: true,
+            address: true,
+            city: true,
+            state: true,
+            stage: {
+              select: {
+                name: true,
+                color: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { appointmentTime: "asc" },
+    });
+
+    return { data: appointments };
+  } catch (error) {
+    console.error("Error fetching appointments:", error);
+    return { error: "Failed to fetch appointments", data: [] };
   }
 }

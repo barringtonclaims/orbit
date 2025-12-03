@@ -24,6 +24,7 @@ interface CalendarEvent {
   id: string;
   title: string;
   dueDate: Date;
+  appointmentTime: Date | null;
   taskType: string;
   status: string;
   isAppointment: boolean;
@@ -62,7 +63,20 @@ export function CalendarView({ events, settings }: CalendarViewProps) {
   };
 
   const getEventsForDay = (day: Date) => {
-    return events.filter(event => isSameDay(new Date(event.dueDate), day));
+    return events
+      .filter(event => {
+        // For appointments, use appointmentTime if available
+        const eventDate = event.isAppointment && event.appointmentTime 
+          ? new Date(event.appointmentTime)
+          : new Date(event.dueDate);
+        return isSameDay(eventDate, day);
+      })
+      .sort((a, b) => {
+        // Sort by time - appointments with times first, then by time
+        const aTime = a.appointmentTime ? new Date(a.appointmentTime).getTime() : (a.isAppointment ? 0 : Infinity);
+        const bTime = b.appointmentTime ? new Date(b.appointmentTime).getTime() : (b.isAppointment ? 0 : Infinity);
+        return aTime - bTime;
+      });
   };
 
   return (
@@ -163,29 +177,36 @@ export function CalendarView({ events, settings }: CalendarViewProps) {
                       key={event.id} 
                       href={`/contacts/${event.contact.id}`}
                       className={cn(
-                        "block text-xs px-2 py-1.5 rounded-md border truncate shadow-sm transition-all hover:scale-[1.02] hover:shadow-md",
+                        "block text-xs rounded-md border transition-all hover:scale-[1.02] hover:shadow-md overflow-hidden",
                         event.isAppointment 
-                          ? "bg-teal-50 border-teal-200 text-teal-700 dark:bg-teal-900/30 dark:border-teal-800 dark:text-teal-300"
-                          : "bg-white border-gray-100 text-gray-600 dark:bg-zinc-800/50 dark:border-zinc-700 dark:text-zinc-400",
-                        event.status === "COMPLETED" && "opacity-60 line-through grayscale"
+                          ? "bg-teal-500/10 border-teal-500/30 shadow-sm"
+                          : "bg-muted/50 border-border/50",
+                        event.status === "COMPLETED" && "opacity-50 line-through"
                       )}
                       title={event.title}
                     >
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        {event.isAppointment ? (
-                          <CalendarIcon className="w-3 h-3 shrink-0 opacity-70" />
-                        ) : (
-                          <CheckSquare className="w-3 h-3 shrink-0 opacity-70" />
+                      {/* Time badge for appointments */}
+                      {event.isAppointment && event.appointmentTime && (
+                        <div className="bg-teal-500 text-white px-2 py-0.5 text-[10px] font-semibold flex items-center gap-1">
+                          <CalendarIcon className="w-2.5 h-2.5" />
+                          {format(new Date(event.appointmentTime), "h:mm a")}
+                        </div>
+                      )}
+                      <div className="px-2 py-1.5">
+                        {!event.isAppointment && (
+                          <div className="flex items-center gap-1 text-muted-foreground mb-0.5">
+                            <CheckSquare className="w-2.5 h-2.5" />
+                            <span className="text-[9px] uppercase tracking-wide font-medium">Task</span>
+                          </div>
                         )}
-                        <span className="font-semibold text-[10px] uppercase tracking-wide opacity-80">
-                          {event.isAppointment ? format(new Date(event.dueDate), "h:mm a") : "Task"}
-                        </span>
-                      </div>
-                      <div className="truncate font-medium">
-                        {event.contact.firstName} {event.contact.lastName}
-                      </div>
-                      <div className="truncate text-[10px] opacity-80">
-                        {event.title.split(" - ").pop()}
+                        <div className="font-medium truncate">
+                          {event.contact.firstName} {event.contact.lastName}
+                        </div>
+                        {event.isAppointment && (
+                          <div className="text-[10px] text-muted-foreground truncate">
+                            Inspection
+                          </div>
+                        )}
                       </div>
                     </Link>
                   ))}

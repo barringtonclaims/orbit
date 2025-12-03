@@ -22,8 +22,11 @@ import {
   FileText,
   CheckSquare,
   Clock,
+  Shield,
+  Briefcase,
 } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
+import { STAGE_NAMES } from "@/types";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -68,6 +71,13 @@ export default async function ContactDetailPage({
   const nextTask = pendingTasks[0];
 
   const defaultOpenSMS = action === "send-first";
+  
+  // Check if this is a claim-related stage
+  const isClaimStage = contact.stage?.name === STAGE_NAMES.CLAIM_PROSPECT || 
+                       contact.stage?.name === STAGE_NAMES.OPEN_CLAIM;
+  
+  // Check if this is an approved job
+  const isApproved = contact.stage?.stageType === "APPROVED";
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -165,9 +175,35 @@ export default async function ContactDetailPage({
               lastName: contact.lastName,
               phone: contact.phone,
               email: contact.email,
-              stage: contact.stage,
+              address: contact.address,
+              city: contact.city,
+              state: contact.state,
+              zipCode: contact.zipCode,
+              carrier: contact.carrier,
+              dateOfLoss: contact.dateOfLoss,
+              policyNumber: contact.policyNumber,
+              claimNumber: contact.claimNumber,
+              quoteType: contact.quoteType,
+              jobStatus: contact.jobStatus,
+              // Workflow state tracking
+              firstMessageSentAt: contact.firstMessageSentAt,
+              quoteSentAt: contact.quoteSentAt,
+              claimRecSentAt: contact.claimRecSentAt,
+              paSentAt: contact.paSentAt,
+              stage: contact.stage ? {
+                id: contact.stage.id,
+                name: contact.stage.name,
+                stageType: contact.stage.stageType,
+                workflowType: contact.stage.workflowType,
+              } : null,
             }}
-            currentTask={nextTask ? { id: nextTask.id, taskType: nextTask.taskType } : null}
+            currentTask={nextTask ? { 
+              id: nextTask.id, 
+              taskType: nextTask.taskType,
+              actionButton: nextTask.actionButton,
+              appointmentTime: nextTask.appointmentTime,
+            } : null}
+            inspectionDays={inspectionDays}
           />
 
           {/* Next Task Card */}
@@ -176,7 +212,7 @@ export default async function ContactDetailPage({
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2 text-primary">
                   <Clock className="w-4 h-4" />
-                  Next Follow-up
+                  Current Task
                 </CardTitle>
               </CardHeader>
               <CardContent>

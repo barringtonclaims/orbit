@@ -1,4 +1,4 @@
-// Orbit CRM Database Schema
+// Orbit CRM Database Schema - Roofing Sales Workflow
 generator client {
   provider = "prisma-client-js"
 }
@@ -22,40 +22,41 @@ model User {
   updatedAt     DateTime  @updatedAt
 
   // Relations
-  memberships   OrganizationMember[]
+  memberships      OrganizationMember[]
   assignedContacts Contact[] @relation("AssignedTo")
   createdContacts  Contact[] @relation("CreatedBy")
-  tasks         Task[]
-  notes         Note[]
+  tasks            Task[]
+  notes            Note[]
+  calendarTokens   GoogleCalendarToken[]
 
   @@map("users")
 }
 
 model Organization {
-  id          String    @id @default(uuid())
-  name        String
-  slug        String    @unique
-  logoUrl     String?
+  id             String    @id @default(uuid())
+  name           String
+  slug           String    @unique
+  logoUrl        String?
   officeDays     Int[]     @default([1, 3, 5]) // 1=Mon, 3=Wed, 5=Fri
   inspectionDays Int[]     @default([2, 4])    // 2=Tue, 4=Thu
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   // Relations
-  members     OrganizationMember[]
-  contacts    Contact[]
-  leadStages  LeadStage[]
+  members          OrganizationMember[]
+  contacts         Contact[]
+  leadStages       LeadStage[]
   messageTemplates MessageTemplate[]
 
   @@map("organizations")
 }
 
 model OrganizationMember {
-  id             String   @id @default(uuid())
+  id             String     @id @default(uuid())
   userId         String
   organizationId String
   role           MemberRole @default(MEMBER)
-  joinedAt       DateTime @default(now())
+  joinedAt       DateTime   @default(now())
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -94,6 +95,29 @@ model Contact {
   stageId        String?
   stageOrder     Int       @default(0)
   
+  // Retail Prospect Fields
+  quoteType      String?   // e.g., "Full Roof Replacement", "Repair", "Gutters"
+  
+  // Claim Prospect Fields (populated when contact becomes claim prospect)
+  carrier        String?   // Insurance carrier name
+  dateOfLoss     DateTime? // Date of the damage/loss event
+  policyNumber   String?   // Insurance policy number (manual entry)
+  claimNumber    String?   // Insurance claim number (manual entry)
+  
+  // Seasonal Follow-up
+  seasonalReminderDate DateTime? // Date to remind for seasonal follow-up (spring)
+  
+  // Workflow State Tracking
+  firstMessageSentAt DateTime?   // When first message was sent (for follow-up cycle)
+  claimRecSentAt     DateTime?   // When claim recommendation was sent
+  paSentAt           DateTime?   // When PA agreement was sent
+  quoteSentAt        DateTime?   // When quote was sent
+  
+  // Job Tracking (for Approved status)
+  jobStatus         JobStatus?
+  jobScheduledDate  DateTime?
+  jobCompletedDate  DateTime?
+  
   // Metadata
   source         String?   // Where the lead came from
   notes          String?   // Initial notes about the lead
@@ -112,19 +136,29 @@ model Contact {
   @@index([organizationId])
   @@index([assignedToId])
   @@index([stageId])
+  @@index([jobStatus])
+  @@index([seasonalReminderDate])
   @@map("contacts")
 }
 
+// Job status for approved jobs
+enum JobStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+}
+
 model LeadStage {
-  id             String   @id @default(uuid())
+  id             String       @id @default(uuid())
   organizationId String
   name           String
   description    String?
-  color          String   @default("#6366f1") // Indigo default
+  color          String       @default("#6366f1") // Indigo default
   order          Int
-  isTerminal     Boolean  @default(false) // True for Approved, Not Interested, Seasonal
-  stageType      StageType @default(ACTIVE)
-  createdAt      DateTime @default(now())
+  isTerminal     Boolean      @default(false) // True for Approved, Not Interested, Seasonal
+  stageType      StageType    @default(ACTIVE)
+  workflowType   WorkflowType @default(BOTH) // Which workflow path this stage belongs to
+  createdAt      DateTime     @default(now())
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   contacts       Contact[]
@@ -140,12 +174,20 @@ enum StageType {
   NOT_INTERESTED  // Lost/Not interested
 }
 
+// Defines which workflow path a stage belongs to
+enum WorkflowType {
+  RETAIL    // Retail prospect path only
+  CLAIM     // Claim prospect path only
+  BOTH      // Shared stages (New Lead, Scheduled Inspection, terminal stages)
+  TERMINAL  // Terminal stages (Approved, Seasonal, Not Interested)
+}
+
 // ============================================
 // TASK & FOLLOW-UP MODELS
 // ============================================
 
 model Task {
-  id          String     @id @default(uuid())
+  id          String       @id @default(uuid())
   contactId   String
   userId      String
   
@@ -153,23 +195,25 @@ model Task {
   description String?
   dueDate     DateTime
   completedAt DateTime?
-  status      TaskStatus @default(PENDING)
-  taskType    TaskType   @default(FOLLOW_UP)
+  status      TaskStatus   @default(PENDING)
+  taskType    TaskType     @default(FOLLOW_UP)
+  actionButton ActionButton? // Which action button to show for this task
   
   // For appointments
   appointmentTime DateTime?
-  calendarEventId String?
+  calendarEventId String?   // Google Calendar event ID
   
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
-  contact     Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  user        User       @relation(fields: [userId], references: [id])
+  contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id])
 
   @@index([contactId])
   @@index([userId])
   @@index([dueDate])
   @@index([status])
+  @@index([taskType])
   @@map("tasks")
 }
 
@@ -181,14 +225,50 @@ enum TaskStatus {
 }
 
 enum TaskType {
-  FOLLOW_UP
-  FIRST_MESSAGE
-  SET_APPOINTMENT
-  APPOINTMENT
-  WRITE_QUOTE
-  SEND_QUOTE
-  CLAIM_RECOMMENDATION
-  CUSTOM
+  // Initial workflow
+  FIRST_MESSAGE              // New lead - send first message
+  FIRST_MESSAGE_FOLLOW_UP    // Follow up if no response to first message
+  SET_APPOINTMENT            // Schedule initial inspection
+  APPOINTMENT                // Scheduled inspection (also calendar event)
+  APPOINTMENT_REMINDER       // Send appointment reminder before inspection
+  ASSIGN_STATUS              // Post-inspection - assign retail or claim
+  
+  // Retail workflow
+  WRITE_QUOTE                // Legacy - write quote (deprecated, use SEND_QUOTE)
+  SEND_QUOTE                 // Write and send quote
+  QUOTE_FOLLOW_UP            // Follow up on sent quote
+  
+  // Claim workflow
+  CLAIM_RECOMMENDATION       // Send initial claim recommendation
+  CLAIM_REC_FOLLOW_UP        // Follow up on claim recommendation
+  PA_AGREEMENT               // Send PA (Public Adjuster) agreement
+  PA_FOLLOW_UP               // Follow up on PA agreement
+  CLAIM_FOLLOW_UP            // Ongoing claim follow-up (after PA signed)
+  
+  // General
+  FOLLOW_UP                  // Generic follow-up
+  CUSTOM                     // Custom user-created task
+}
+
+// Action buttons that appear on tasks based on context
+enum ActionButton {
+  SEND_FIRST_MESSAGE         // Opens template selector for first message SMS
+  SEND_FIRST_MESSAGE_FOLLOW_UP // Opens template for first message follow-up
+  SCHEDULE_INSPECTION        // Opens calendar to schedule inspection
+  SEND_APPOINTMENT_REMINDER  // Opens template for appointment reminder
+  ASSIGN_STATUS              // Opens modal to select retail/claim + notes
+  SEND_QUOTE                 // Opens template selector for quote email
+  SEND_QUOTE_FOLLOW_UP       // Opens template for quote follow-up
+  SEND_CLAIM_REC             // Opens template for claim recommendation
+  SEND_CLAIM_REC_FOLLOW_UP   // Opens template for claim rec follow-up
+  SEND_PA_AGREEMENT          // Opens template for PA agreement
+  SEND_PA_FOLLOW_UP          // Opens template for PA follow-up
+  SEND_CLAIM_FOLLOW_UP       // Opens template for open claim follow-up
+  UPLOAD_PA                  // Opens file upload for signed PA
+  MARK_RESPONDED             // Mark that customer responded
+  MARK_JOB_SCHEDULED         // Mark job as scheduled
+  MARK_JOB_IN_PROGRESS       // Mark job as in progress
+  MARK_JOB_COMPLETE          // Mark job as complete
 }
 
 // ============================================
@@ -220,7 +300,12 @@ enum NoteType {
   STAGE_CHANGE
   TASK_COMPLETED
   APPOINTMENT_SCHEDULED
+  APPOINTMENT_COMPLETED
   FILE_UPLOADED
+  PA_UPLOADED
+  QUOTE_SENT
+  CLAIM_REC_SENT
+  JOB_STATUS_CHANGE
   SYSTEM
 }
 
@@ -238,17 +323,22 @@ model ContactFile {
   fileSize  Int      // in bytes
   mimeType  String?
   
+  // For PA agreements
+  isPADocument Boolean @default(false)
+  
   createdAt DateTime @default(now())
 
   contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@index([contactId])
+  @@index([isPADocument])
   @@map("contact_files")
 }
 
 enum FileType {
   PHOTO
   DOCUMENT
+  PA_AGREEMENT
 }
 
 // ============================================
@@ -256,24 +346,69 @@ enum FileType {
 // ============================================
 
 model MessageTemplate {
-  id             String      @id @default(uuid())
+  id             String           @id @default(uuid())
   organizationId String
   
   name           String
+  subject        String?          // For email templates
   body           String
   templateType   TemplateType
-  category       String?     // e.g., "First Contact", "Follow Up", "Quote"
-  isDefault      Boolean     @default(false)
+  category       TemplateCategory @default(GENERAL)
+  variables      Json?            // Available variables: ["first_name", "address", "carrier", etc.]
+  isDefault      Boolean          @default(false)
   
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  @@index([organizationId])
+  @@index([category])
   @@map("message_templates")
 }
 
 enum TemplateType {
   SMS
   EMAIL
+}
+
+enum TemplateCategory {
+  FIRST_MESSAGE           // Initial contact SMS
+  FIRST_MESSAGE_FOLLOW_UP // Follow up if no response to first message
+  APPOINTMENT_REMINDER    // Reminder before scheduled inspection
+  QUOTE                   // Quote email
+  QUOTE_FOLLOW_UP         // Quote follow-up
+  CLAIM_RECOMMENDATION    // Initial claim recommendation email
+  CLAIM_REC_FOLLOW_UP     // Claim recommendation follow-up
+  PA_AGREEMENT            // PA agreement email
+  PA_FOLLOW_UP            // PA agreement follow-up
+  CLAIM_FOLLOW_UP         // Ongoing claim follow-up
+  SEASONAL                // Seasonal follow-up message
+  GENERAL                 // General purpose template
+}
+
+// ============================================
+// GOOGLE CALENDAR INTEGRATION
+// ============================================
+
+model GoogleCalendarToken {
+  id           String   @id @default(uuid())
+  userId       String
+  
+  accessToken  String
+  refreshToken String
+  tokenType    String
+  expiresAt    DateTime
+  scope        String
+  
+  // Calendar settings
+  calendarId   String   @default("primary") // Which calendar to sync to
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+  @@map("google_calendar_tokens")
 }

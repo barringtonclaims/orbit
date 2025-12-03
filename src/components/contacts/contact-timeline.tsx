@@ -184,3 +184,4 @@ export function ContactTimeline({ contactId, timeline }: ContactTimelineProps) {
   );
 }
 
+

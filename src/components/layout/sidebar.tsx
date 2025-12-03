@@ -21,7 +21,6 @@ import {
   LayoutDashboard,
   Users,
   CheckSquare,
-  MessageSquare,
   Settings,
   LogOut,
   Menu,
@@ -52,7 +51,6 @@ const navItems = [
   { href: "/calendar", label: "Calendar", icon: CalendarIcon },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
-  { href: "/templates", label: "Templates", icon: MessageSquare },
 ];
 
 const bottomNavItems = [
