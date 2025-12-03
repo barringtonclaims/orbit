@@ -257,7 +257,7 @@ export default function NewContactPage() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
           <Link href="/contacts">
             <Button variant="ghost" size="icon">
@@ -272,43 +272,52 @@ export default function NewContactPage() {
           </div>
         </div>
 
-        {/* Import Buttons */}
-        <div className="flex gap-2">
-          {hasContactPicker && (
+        {/* Import Button */}
+        <div className="flex flex-col gap-1">
+          <div className="flex gap-2">
+            {hasContactPicker && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handlePickContact}
+                disabled={isImporting || isLoading}
+                className="flex-1 sm:flex-none"
+              >
+                {isImporting ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Contact className="w-4 h-4 mr-2" />
+                )}
+                Import from Device
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
-              onClick={handlePickContact}
+              onClick={() => fileInputRef.current?.click()}
               disabled={isImporting || isLoading}
+              className="flex-1 sm:flex-none"
             >
               {isImporting ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               ) : (
-                <Contact className="w-4 h-4 mr-2" />
+                <Upload className="w-4 h-4 mr-2" />
               )}
-              Import from Device
+              Import Contact
             </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".vcf,.vcard,text/vcard,text/x-vcard"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </div>
+          {!hasContactPicker && (
+            <p className="text-xs text-muted-foreground">
+              Tip: In Contacts app, select a contact → Share → Save to Files
+            </p>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isImporting || isLoading}
-          >
-            {isImporting ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Upload className="w-4 h-4 mr-2" />
-            )}
-            Upload vCard
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".vcf,.vcard,text/vcard,text/x-vcard"
-            onChange={handleFileUpload}
-            className="hidden"
-          />
         </div>
       </div>
 
