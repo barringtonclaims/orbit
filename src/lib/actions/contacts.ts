@@ -189,7 +189,7 @@ export async function createContact(input: CreateContactInput) {
     revalidatePath("/dashboard");
     revalidatePath("/tasks");
 
-    return { data: contact, action: "send-first" };
+    return { data: contact };
   } catch (error) {
     console.error("Error creating contact:", error);
     return { error: "Failed to create contact" };

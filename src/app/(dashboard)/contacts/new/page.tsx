@@ -241,12 +241,7 @@ export default function NewContactPage() {
       }
 
       toast.success("Contact created! First follow-up task scheduled.");
-      
-      if (result.action) {
-        router.push(`/contacts/${result.data?.id}?action=${result.action}`);
-      } else {
-        router.push(`/contacts/${result.data?.id}`);
-      }
+      router.push(`/contacts/${result.data?.id}`);
     } catch {
       toast.error("Failed to create contact");
     } finally {
