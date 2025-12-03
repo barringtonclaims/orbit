@@ -1,9 +1,7 @@
+"use client";
+
 import { WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-export const metadata = {
-  title: "Offline",
-};
 
 export default function OfflinePage() {
   return (
