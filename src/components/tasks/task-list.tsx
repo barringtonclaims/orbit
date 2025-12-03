@@ -87,6 +87,7 @@ interface TaskListProps {
   tasks: Task[];
   emptyMessage: string;
   showContactLink?: boolean;
+  showSectionHeader?: boolean;
 }
 
 // Map task types to template categories
@@ -109,7 +110,7 @@ const autoRescheduleTypes = [
   "CLAIM_FOLLOW_UP",
 ];
 
-export function TaskList({ tasks, emptyMessage, showContactLink = true }: TaskListProps) {
+export function TaskList({ tasks, emptyMessage, showContactLink = true, showSectionHeader = true }: TaskListProps) {
   const router = useRouter();
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
@@ -312,6 +313,9 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true }: TaskLi
   };
 
   if (tasks.length === 0) {
+    // Don't render anything if no empty message (used in sectioned views)
+    if (!emptyMessage) return null;
+    
     return (
       <Card className="p-12">
         <div className="text-center">

@@ -1,15 +1,14 @@
-import Link from "next/link";
 import { getTasks, getTaskStats } from "@/lib/actions/tasks";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TaskList } from "@/components/tasks/task-list";
 import { 
-  CheckSquare, 
   Clock, 
   AlertCircle, 
   Calendar,
-  CheckCircle2
+  CheckCircle2,
+  ListTodo
 } from "lucide-react";
 
 export const metadata = {
@@ -30,6 +29,16 @@ export default async function TasksPage() {
     getTasks({ view: "completed" }),
     getTaskStats(),
   ]);
+
+  const activeTasks = [
+    ...(overdueTasks || []),
+    ...(todayTasks || []),
+    ...(upcomingTasks || []),
+  ];
+
+  const activeCount = activeTasks.length;
+  const overdueCount = overdueTasks?.length || 0;
+  const todayCount = todayTasks?.length || 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -84,28 +93,15 @@ export default async function TasksPage() {
         </Card>
       </div>
 
-      {/* Task Tabs */}
-      <Tabs defaultValue="today" className="space-y-4">
+      {/* Task Tabs - Simplified */}
+      <Tabs defaultValue="active" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="today" className="gap-2">
-            <Clock className="w-4 h-4" />
-            Today
-            {(todayTasks?.length || 0) > 0 && (
-              <Badge variant="secondary" className="ml-1">
-                {todayTasks?.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="upcoming" className="gap-2">
-            <Calendar className="w-4 h-4" />
-            Upcoming
-          </TabsTrigger>
-          <TabsTrigger value="overdue" className="gap-2">
-            <AlertCircle className="w-4 h-4" />
-            Overdue
-            {(overdueTasks?.length || 0) > 0 && (
-              <Badge variant="destructive" className="ml-1">
-                {overdueTasks?.length}
+          <TabsTrigger value="active" className="gap-2">
+            <ListTodo className="w-4 h-4" />
+            Active
+            {activeCount > 0 && (
+              <Badge variant={overdueCount > 0 ? "destructive" : "secondary"} className="ml-1">
+                {activeCount}
               </Badge>
             )}
           </TabsTrigger>
@@ -115,25 +111,63 @@ export default async function TasksPage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="today">
-          <TaskList
-            tasks={todayTasks || []}
-            emptyMessage="No tasks due today. You're all caught up!"
-          />
-        </TabsContent>
+        <TabsContent value="active" className="space-y-6">
+          {activeCount === 0 ? (
+            <Card className="p-8 text-center">
+              <CheckCircle2 className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
+              <p className="text-muted-foreground">No active tasks. You&apos;re all caught up!</p>
+            </Card>
+          ) : (
+            <>
+              {/* Overdue Section */}
+              {overdueCount > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-destructive" />
+                    <h3 className="font-semibold text-destructive">Overdue</h3>
+                    <Badge variant="destructive">{overdueCount}</Badge>
+                  </div>
+                  <TaskList
+                    tasks={overdueTasks || []}
+                    emptyMessage=""
+                    showSectionHeader={false}
+                  />
+                </div>
+              )}
 
-        <TabsContent value="upcoming">
-          <TaskList
-            tasks={upcomingTasks || []}
-            emptyMessage="No upcoming tasks scheduled."
-          />
-        </TabsContent>
+              {/* Today Section */}
+              {todayCount > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-primary" />
+                    <h3 className="font-semibold">Today</h3>
+                    <Badge variant="secondary">{todayCount}</Badge>
+                  </div>
+                  <TaskList
+                    tasks={todayTasks || []}
+                    emptyMessage=""
+                    showSectionHeader={false}
+                  />
+                </div>
+              )}
 
-        <TabsContent value="overdue">
-          <TaskList
-            tasks={overdueTasks || []}
-            emptyMessage="No overdue tasks. Great job staying on top of things!"
-          />
+              {/* Upcoming Section */}
+              {(upcomingTasks?.length || 0) > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-muted-foreground" />
+                    <h3 className="font-semibold text-muted-foreground">Upcoming</h3>
+                    <Badge variant="outline">{upcomingTasks?.length}</Badge>
+                  </div>
+                  <TaskList
+                    tasks={upcomingTasks || []}
+                    emptyMessage=""
+                    showSectionHeader={false}
+                  />
+                </div>
+              )}
+            </>
+          )}
         </TabsContent>
 
         <TabsContent value="completed">
