@@ -34,7 +34,7 @@ export type TaskWithContact = Prisma.TaskGetPayload<{
 }>;
 
 export async function getTasks(options?: {
-  view?: "today" | "upcoming" | "overdue" | "completed" | "all";
+  view?: "today" | "upcoming" | "overdue" | "completed" | "seasonal" | "not_interested" | "approved" | "all";
   contactId?: string;
   taskType?: string;
 }) {
@@ -46,12 +46,43 @@ export async function getTasks(options?: {
   }
 
   try {
+    // Get user's ACTIVE organization
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
+    });
+
+    let membership;
+    if (dbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { 
+          userId: user.id,
+          organizationId: dbUser.activeOrganizationId,
+        },
+      });
+    }
+
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
+
+    if (!membership) {
+      return { data: [] };
+    }
+
     const now = new Date();
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
 
     const where: Prisma.TaskWhereInput = {
       userId: user.id,
+      // CRITICAL: Only show tasks for contacts in the active organization
+      contact: {
+        organizationId: membership.organizationId,
+      },
     };
 
     if (options?.contactId) {
@@ -62,27 +93,61 @@ export async function getTasks(options?: {
       where.taskType = options.taskType as Prisma.EnumTaskTypeFilter["equals"];
     }
 
+    // Active views exclude terminal stages (seasonal, not interested, approved)
+    const activeContactFilter = {
+      organizationId: membership.organizationId,
+      OR: [
+        { stage: { isTerminal: false } },
+        { stage: null },
+        { stageId: null },
+      ],
+    };
+
     switch (options?.view) {
       case "today":
         where.status = { in: ["PENDING", "IN_PROGRESS"] };
         where.dueDate = { gte: todayStart, lte: todayEnd };
+        where.contact = activeContactFilter;
         break;
       case "upcoming":
         where.status = { in: ["PENDING", "IN_PROGRESS"] };
         where.dueDate = { gt: todayEnd };
+        where.contact = activeContactFilter;
         break;
       case "overdue":
         where.status = { in: ["PENDING", "IN_PROGRESS"] };
         where.dueDate = { lt: todayStart };
+        where.contact = activeContactFilter;
         break;
       case "completed":
         where.status = "COMPLETED";
         break;
+      case "seasonal":
+        where.status = { in: ["PENDING", "IN_PROGRESS"] };
+        where.contact = {
+          organizationId: membership.organizationId,
+          stage: { stageType: "SEASONAL" },
+        };
+        break;
+      case "not_interested":
+        where.status = { in: ["PENDING", "IN_PROGRESS"] };
+        where.contact = {
+          organizationId: membership.organizationId,
+          stage: { stageType: "NOT_INTERESTED" },
+        };
+        break;
+      case "approved":
+        where.status = { in: ["PENDING", "IN_PROGRESS"] };
+        where.contact = {
+          organizationId: membership.organizationId,
+          stage: { stageType: "APPROVED" },
+        };
+        break;
       case "all":
-        // No status filter - show all
         break;
       default:
         where.status = { in: ["PENDING", "IN_PROGRESS"] };
+        where.contact = activeContactFilter;
     }
 
     const tasks = await prisma.task.findMany({
@@ -132,6 +197,33 @@ export async function getTaskStats() {
   }
 
   try {
+    // Get active organization
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
+    });
+
+    let membership;
+    if (dbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { 
+          userId: user.id,
+          organizationId: dbUser.activeOrganizationId,
+        },
+      });
+    }
+
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
+
+    if (!membership) {
+      return { data: null };
+    }
+
     const now = new Date();
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
@@ -140,6 +232,7 @@ export async function getTaskStats() {
       prisma.task.count({
         where: {
           userId: user.id,
+          contact: { organizationId: membership.organizationId },
           status: { in: ["PENDING", "IN_PROGRESS"] },
           dueDate: { gte: todayStart, lte: todayEnd },
         },
@@ -147,6 +240,7 @@ export async function getTaskStats() {
       prisma.task.count({
         where: {
           userId: user.id,
+          contact: { organizationId: membership.organizationId },
           status: { in: ["PENDING", "IN_PROGRESS"] },
           dueDate: { gt: todayEnd },
         },
@@ -154,6 +248,7 @@ export async function getTaskStats() {
       prisma.task.count({
         where: {
           userId: user.id,
+          contact: { organizationId: membership.organizationId },
           status: { in: ["PENDING", "IN_PROGRESS"] },
           dueDate: { lt: todayStart },
         },
@@ -170,6 +265,7 @@ export async function getTaskStats() {
 export async function completeTask(taskId: string, options?: {
   reschedule?: boolean; // Whether to auto-reschedule to next office day
   nextTaskType?: TaskTypeForTitle; // Specific task type for next task
+  customTitle?: string; // Override the auto-generated task title
   notes?: string;
 }) {
   const supabase = await createClient();
@@ -201,35 +297,83 @@ export async function completeTask(taskId: string, options?: {
       },
     });
 
-    // Handle auto-reschedule or next task creation
-    if (options?.reschedule || options?.nextTaskType) {
-      const contactName = `${task.contact.firstName} ${task.contact.lastName}`;
-      
-      // Fetch org for scheduling settings
-      const membership = await prisma.organizationMember.findFirst({
-        where: { userId: user.id },
-        include: { organization: true },
-      });
-      const officeDays = membership?.organization.officeDays || [1, 3, 5];
+    // Fetch org for scheduling settings
+    const membership = await prisma.organizationMember.findFirst({
+      where: { userId: user.id },
+      include: { organization: true },
+    });
+    const officeDays = membership?.organization.officeDays || [1, 3, 5];
+    const contactName = `${task.contact.firstName} ${task.contact.lastName}`;
+
+    // Handle explicit reschedule or next task creation
+    if (options?.reschedule || options?.nextTaskType || options?.customTitle) {
       const nextDate = getNextOfficeDay(new Date(), officeDays);
-      
-      // Determine next task type - use provided or same as current
-      const nextTaskType = options.nextTaskType || task.taskType as TaskTypeForTitle;
+      const nextTaskType = options?.nextTaskType || task.taskType as TaskTypeForTitle;
       const actionButton = getActionButtonForTaskType(nextTaskType);
+      
+      // Use custom title if provided, otherwise auto-generate
+      const title = options?.customTitle 
+        ? `${contactName} - ${options.customTitle}`
+        : generateTaskTitle(contactName, nextTaskType, {
+            quoteType: task.contact.quoteType || undefined,
+          });
       
       await prisma.task.create({
         data: {
           contactId: task.contactId,
           userId: user.id,
-          title: generateTaskTitle(contactName, nextTaskType, {
-            quoteType: task.contact.quoteType || undefined,
-          }),
+          title,
           dueDate: nextDate,
           status: "PENDING",
           taskType: nextTaskType,
-          actionButton: actionButton as "SEND_FIRST_MESSAGE" | "SCHEDULE_INSPECTION" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "UPLOAD_PA" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | null,
+          actionButton: actionButton as ActionButtonType,
+          currentAction: actionButton as ActionButtonType,
         },
       });
+    }
+
+    // SAFETY NET: Every contact must always have a pending task.
+    // Check if the contact still has any pending tasks after this completion.
+    const remainingTasks = await prisma.task.count({
+      where: {
+        contactId: task.contactId,
+        status: { in: ["PENDING", "IN_PROGRESS"] },
+      },
+    });
+
+    if (remainingTasks === 0) {
+      const contact = await prisma.contact.findUnique({
+        where: { id: task.contactId },
+        include: { stage: true },
+      });
+
+      if (contact) {
+        const nextDate = getNextOfficeDay(new Date(), officeDays);
+        let fallbackTitle = `${contactName} - Follow Up`;
+        const fallbackType: TaskTypeForTitle = "FOLLOW_UP";
+
+        if (contact.stage?.stageType === "APPROVED") {
+          fallbackTitle = `${contactName} - Approval Check In`;
+        } else if (contact.stage?.stageType === "NOT_INTERESTED") {
+          fallbackTitle = `${contactName} - Reactivation Review`;
+        } else if (contact.stage?.stageType === "SEASONAL") {
+          fallbackTitle = `${contactName} - Seasonal Follow Up`;
+        }
+
+        const actionButton = getActionButtonForTaskType(fallbackType);
+        await prisma.task.create({
+          data: {
+            contactId: task.contactId,
+            userId: user.id,
+            title: fallbackTitle,
+            dueDate: nextDate,
+            status: "PENDING",
+            taskType: fallbackType,
+            actionButton: actionButton as ActionButtonType,
+            currentAction: actionButton as ActionButtonType,
+          },
+        });
+      }
     }
 
     revalidatePath("/tasks");
@@ -240,6 +384,28 @@ export async function completeTask(taskId: string, options?: {
   } catch (error) {
     console.error("Error completing task:", error);
     return { error: "Failed to complete task" };
+  }
+}
+
+// Type for all action buttons
+type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
+
+/**
+ * Update quick notes on a task (auto-save from UI)
+ */
+export async function updateTaskNotes(taskId: string, quickNotes: string) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Unauthorized" };
+
+  try {
+    await prisma.task.update({
+      where: { id: taskId },
+      data: { quickNotes: quickNotes || null },
+    });
+    return { success: true };
+  } catch {
+    return { error: "Failed to update notes" };
   }
 }
 
@@ -323,6 +489,64 @@ export async function rescheduleTask(taskId: string, newDate: Date) {
   }
 }
 
+/**
+ * Reschedule a task by N office days (respects organization's office day settings)
+ * @param taskId Task to reschedule
+ * @param officeDaysToSkip Number of office days to skip (1 = next office day, 2 = 2nd office day, etc.)
+ */
+export async function rescheduleTaskByOfficeDays(taskId: string, officeDaysToSkip: number) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized" };
+  }
+
+  try {
+    // Get user's organization settings for office days
+    const membership = await prisma.organizationMember.findFirst({
+      where: { userId: user.id },
+      include: { organization: true },
+    });
+    
+    const officeDays = membership?.organization?.officeDays || [1, 3, 5]; // Default M/W/F
+    
+    // Calculate the new date using office day logic
+    const { getNthOfficeDay } = await import("@/lib/scheduling");
+    const newDate = getNthOfficeDay(officeDaysToSkip, new Date(), officeDays);
+    
+    const task = await prisma.task.update({
+      where: { id: taskId },
+      data: {
+        dueDate: newDate,
+      },
+      include: {
+        contact: true,
+      },
+    });
+
+    // Add timeline entry
+    await prisma.note.create({
+      data: {
+        contactId: task.contactId,
+        userId: user.id,
+        content: `Task rescheduled to ${newDate.toLocaleDateString()} (${officeDaysToSkip} office day${officeDaysToSkip > 1 ? 's' : ''})`,
+        noteType: "SYSTEM",
+      },
+    });
+
+    revalidatePath("/tasks");
+    revalidatePath("/dashboard");
+    revalidatePath(`/contacts/${task.contactId}`);
+    revalidatePath("/calendar");
+
+    return { data: task, newDate };
+  } catch (error) {
+    console.error("Error rescheduling task:", error);
+    return { error: "Failed to reschedule task" };
+  }
+}
+
 export async function createTask(input: {
   contactId: string;
   title: string;
@@ -351,7 +575,8 @@ export async function createTask(input: {
         dueDate: input.dueDate,
         status: "PENDING",
         taskType: taskType,
-        actionButton: actionButton as "SEND_FIRST_MESSAGE" | "SCHEDULE_INSPECTION" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "UPLOAD_PA" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | null,
+        actionButton: actionButton as ActionButtonType,
+        currentAction: actionButton as ActionButtonType,
         appointmentTime: input.appointmentTime,
       },
     });
@@ -463,5 +688,123 @@ export async function getAppointments(options?: {
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return { error: "Failed to fetch appointments", data: [] };
+  }
+}
+
+/**
+ * Server action to check and fix contacts without tasks
+ * Creates appropriate tasks for any active contacts missing them
+ */
+export async function fixContactsWithoutTasks() {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized" };
+  }
+
+  try {
+    // Get user's organization
+    const membership = await prisma.organizationMember.findFirst({
+      where: { userId: user.id },
+      include: { organization: true },
+    });
+
+    if (!membership) {
+      return { error: "No organization found" };
+    }
+
+    // Import and call the workflow engine function
+    const { checkContactsWithoutTasks } = await import("@/lib/workflow-engine");
+    const result = await checkContactsWithoutTasks(membership.organizationId);
+
+    if (result.error) {
+      return { error: result.error };
+    }
+
+    revalidatePath("/tasks");
+    revalidatePath("/contacts");
+    revalidatePath("/dashboard");
+
+    return { 
+      success: true, 
+      message: result.message,
+      processed: result.processed,
+      contacts: result.contacts,
+    };
+  } catch (error) {
+    console.error("Error fixing contacts without tasks:", error);
+    return { error: "Failed to check contacts" };
+  }
+}
+
+/**
+ * Batch reschedule tasks by N office days — single DB call instead of N serial calls
+ */
+export async function rescheduleTasksBatch(taskIds: string[], officeDaysToSkip: number) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Unauthorized" };
+
+  try {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
+    });
+    let membership;
+    if (dbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id, organizationId: dbUser.activeOrganizationId },
+        include: { organization: true },
+      });
+    }
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        include: { organization: true },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
+    const officeDays = membership?.organization?.officeDays || [1, 3, 5];
+
+    const { getNthOfficeDay } = await import("@/lib/scheduling");
+    const newDate = getNthOfficeDay(officeDaysToSkip, new Date(), officeDays);
+
+    const result = await prisma.task.updateMany({
+      where: { id: { in: taskIds } },
+      data: { dueDate: newDate, updatedAt: new Date() },
+    });
+
+    revalidatePath("/tasks");
+    revalidatePath("/dashboard");
+
+    return { updated: result.count, newDate };
+  } catch (error) {
+    console.error("Error batch rescheduling tasks:", error);
+    return { error: "Failed to reschedule tasks" };
+  }
+}
+
+/**
+ * Batch set tasks to a specific date — single DB call
+ */
+export async function setTasksDateBatch(taskIds: string[], date: Date) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Unauthorized" };
+
+  try {
+    const result = await prisma.task.updateMany({
+      where: { id: { in: taskIds } },
+      data: { dueDate: date, updatedAt: new Date() },
+    });
+
+    revalidatePath("/tasks");
+    revalidatePath("/dashboard");
+
+    return { updated: result.count };
+  } catch (error) {
+    console.error("Error batch setting task dates:", error);
+    return { error: "Failed to set task dates" };
   }
 }

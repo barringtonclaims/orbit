@@ -54,18 +54,19 @@ interface TemplateSettingsProps {
 }
 
 const TEMPLATE_CATEGORIES = [
-  { value: "FIRST_MESSAGE", label: "First Message" },
-  { value: "FIRST_MESSAGE_FOLLOW_UP", label: "First Message Follow Up" },
-  { value: "APPOINTMENT_REMINDER", label: "Appointment Reminder" },
-  { value: "QUOTE", label: "Quote" },
-  { value: "QUOTE_FOLLOW_UP", label: "Quote Follow Up" },
-  { value: "CLAIM_RECOMMENDATION", label: "Claim Recommendation" },
-  { value: "CLAIM_REC_FOLLOW_UP", label: "Claim Rec Follow Up" },
-  { value: "PA_AGREEMENT", label: "PA Agreement" },
-  { value: "PA_FOLLOW_UP", label: "PA Agreement Follow Up" },
-  { value: "CLAIM_FOLLOW_UP", label: "Claim Follow Up" },
-  { value: "SEASONAL", label: "Seasonal Follow Up" },
-  { value: "GENERAL", label: "General" },
+  { value: "FIRST_MESSAGE", label: "First Message", stage: "New Lead" },
+  { value: "FIRST_MESSAGE_FOLLOW_UP", label: "First Message Follow Up", stage: "New Lead" },
+  { value: "APPOINTMENT_REMINDER", label: "Appointment Reminder", stage: "Scheduled Inspection" },
+  { value: "QUOTE", label: "Quote", stage: "Retail Prospect" },
+  { value: "QUOTE_FOLLOW_UP", label: "Quote Follow Up", stage: "Retail Prospect" },
+  { value: "CLAIM_RECOMMENDATION", label: "Claim Recommendation", stage: "Claim Prospect" },
+  { value: "CLAIM_REC_FOLLOW_UP", label: "Claim Rec Follow Up", stage: "Claim Prospect" },
+  { value: "PA_AGREEMENT", label: "PA Agreement", stage: "Claim Prospect" },
+  { value: "PA_FOLLOW_UP", label: "PA Agreement Follow Up", stage: "Claim Prospect" },
+  { value: "CLAIM_FOLLOW_UP", label: "Claim Follow Up", stage: "Open Claim" },
+  { value: "CARRIER_FOLLOW_UP", label: "Carrier Follow Up", stage: "Open Claim" },
+  { value: "SEASONAL", label: "Seasonal Follow Up", stage: "Seasonal" },
+  { value: "GENERAL", label: "General", stage: "" },
 ];
 
 export function TemplateSettings({ templates }: TemplateSettingsProps) {
@@ -81,7 +82,7 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
   // Ref for textarea to track cursor position
   const bodyTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  type TemplateCategory = "FIRST_MESSAGE" | "FIRST_MESSAGE_FOLLOW_UP" | "APPOINTMENT_REMINDER" | "QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "SEASONAL" | "GENERAL";
+  type TemplateCategory = "FIRST_MESSAGE" | "FIRST_MESSAGE_FOLLOW_UP" | "APPOINTMENT_REMINDER" | "QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "CARRIER_FOLLOW_UP" | "SEASONAL" | "GENERAL";
   
   // Form state
   const [formData, setFormData] = useState({

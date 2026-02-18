@@ -17,6 +17,7 @@ export type TemplateCategory =
   | "PA_AGREEMENT" 
   | "PA_FOLLOW_UP" 
   | "CLAIM_FOLLOW_UP" 
+  | "CARRIER_FOLLOW_UP"
   | "SEASONAL" 
   | "GENERAL";
 

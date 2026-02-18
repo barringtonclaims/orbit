@@ -1,12 +1,13 @@
 /**
- * Orbit AI Integration - Google Gemini
+ * Orbit AI Integration - xAI Grok
  * 
  * Provides AI-assisted message generation as a fallback option when templates don't fit.
- * Uses Google's Gemini API for generating professional roofing sales messages.
+ * Uses xAI's Grok API for generating professional roofing sales messages.
  */
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent";
+const XAI_API_KEY = process.env.XAI_API_KEY;
+const XAI_API_URL = "https://api.x.ai/v1/chat/completions";
+const GROK_MODEL = "grok-4-fast";
 
 // System prompt for roofing sales context
 const SYSTEM_PROMPT = `You are a professional sales assistant for a roofing contractor. 
@@ -47,13 +48,13 @@ export interface GeneratedMessage {
 }
 
 /**
- * Generate a custom message using Gemini AI
+ * Generate a custom message using Grok AI
  */
 export async function generateCustomMessage(
   context: MessageContext
 ): Promise<GeneratedMessage | null> {
-  if (!GEMINI_API_KEY) {
-    console.error("GEMINI_API_KEY is not configured");
+  if (!XAI_API_KEY) {
+    console.error("XAI_API_KEY is not configured");
     return null;
   }
 
@@ -114,59 +115,34 @@ BODY:
   }
 
   try {
-    const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+    const response = await fetch(XAI_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Authorization": `Bearer ${XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: SYSTEM_PROMPT },
-              { text: prompt },
-            ],
-          },
+        model: GROK_MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: prompt },
         ],
-        generationConfig: {
-          temperature: 0.7,
-          topK: 40,
-          topP: 0.95,
-          maxOutputTokens: 1024,
-        },
-        safetySettings: [
-          {
-            category: "HARM_CATEGORY_HARASSMENT",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE",
-          },
-          {
-            category: "HARM_CATEGORY_HATE_SPEECH",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE",
-          },
-          {
-            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE",
-          },
-          {
-            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE",
-          },
-        ],
+        temperature: 0.7,
+        max_tokens: 1024,
       }),
     });
 
     if (!response.ok) {
       const error = await response.text();
-      console.error("Gemini API error:", error);
+      console.error("Grok API error:", error);
       return null;
     }
 
     const data = await response.json();
-    const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const generatedText = data.choices?.[0]?.message?.content;
 
     if (!generatedText) {
-      console.error("No text generated from Gemini");
+      console.error("No text generated from Grok");
       return null;
     }
 
@@ -187,7 +163,7 @@ BODY:
       };
     }
   } catch (error) {
-    console.error("Error calling Gemini API:", error);
+    console.error("Error calling Grok API:", error);
     return null;
   }
 }
@@ -218,4 +194,5 @@ export async function generateMessage(context: MessageContext): Promise<{
     };
   }
 }
+
 

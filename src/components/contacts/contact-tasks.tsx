@@ -63,21 +63,53 @@ interface ContactTasksProps {
 }
 
 const taskTypeOptions = [
-  { value: "FOLLOW_UP", label: "Follow Up" },
-  { value: "SET_APPOINTMENT", label: "Set Appointment" },
-  { value: "WRITE_QUOTE", label: "Write Quote" },
+  // Initial Contact
+  { value: "FIRST_MESSAGE", label: "Send First Message" },
+  { value: "FIRST_MESSAGE_FOLLOW_UP", label: "First Message Follow Up" },
+  { value: "SET_APPOINTMENT", label: "Schedule Inspection" },
+  { value: "DISCUSS_INSPECTION", label: "Discuss Inspection" },
+  
+  // Retail Workflow
   { value: "SEND_QUOTE", label: "Send Quote" },
-  { value: "CLAIM_RECOMMENDATION", label: "Claim Recommendation" },
-  { value: "CUSTOM", label: "Custom" },
+  { value: "QUOTE_FOLLOW_UP", label: "Quote Follow Up" },
+  
+  // Claim Workflow
+  { value: "CLAIM_RECOMMENDATION", label: "Send Claim Recommendation" },
+  { value: "CLAIM_REC_FOLLOW_UP", label: "Claim Rec Follow Up" },
+  { value: "PA_AGREEMENT", label: "Send PA Agreement" },
+  { value: "PA_FOLLOW_UP", label: "PA Follow Up" },
+  { value: "CLAIM_FOLLOW_UP", label: "Claim Follow Up" },
+  
+  // Other
+  { value: "SEASONAL_FOLLOW_UP", label: "Seasonal Follow Up" },
+  { value: "FOLLOW_UP", label: "General Follow Up" },
+  { value: "CUSTOM", label: "Custom Task" },
 ];
 
 const nextTaskOptions = [
-  { value: "NONE", label: "None - No follow-up needed" },
-  { value: "FOLLOW_UP", label: "Follow Up" },
-  { value: "SET_APPOINTMENT", label: "Set Initial Inspection" },
-  { value: "WRITE_QUOTE", label: "Write Quote" },
+  { value: "NONE", label: "No follow-up needed" },
+  
+  // Initial Contact
+  { value: "FIRST_MESSAGE", label: "Send First Message" },
+  { value: "FIRST_MESSAGE_FOLLOW_UP", label: "First Message Follow Up" },
+  { value: "SET_APPOINTMENT", label: "Schedule Inspection" },
+  { value: "DISCUSS_INSPECTION", label: "Discuss Inspection" },
+  
+  // Retail Workflow
   { value: "SEND_QUOTE", label: "Send Quote" },
+  { value: "QUOTE_FOLLOW_UP", label: "Quote Follow Up" },
+  
+  // Claim Workflow
   { value: "CLAIM_RECOMMENDATION", label: "Send Claim Recommendation" },
+  { value: "CLAIM_REC_FOLLOW_UP", label: "Claim Rec Follow Up" },
+  { value: "PA_AGREEMENT", label: "Send PA Agreement" },
+  { value: "PA_FOLLOW_UP", label: "PA Follow Up" },
+  { value: "CLAIM_FOLLOW_UP", label: "Claim Follow Up" },
+  
+  // Other
+  { value: "SEASONAL_FOLLOW_UP", label: "Seasonal Follow Up" },
+  { value: "FOLLOW_UP", label: "General Follow Up" },
+  { value: "CUSTOM", label: "Custom Task" },
 ];
 
 export function ContactTasks({ contactId, tasks }: ContactTasksProps) {

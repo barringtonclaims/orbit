@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -18,6 +19,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -28,30 +30,31 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { completeTask, rescheduleTask } from "@/lib/actions/tasks";
-import { rescheduleFollowUp } from "@/lib/workflow-engine";
+import { completeTask, rescheduleTaskByOfficeDays, updateTaskNotes } from "@/lib/actions/tasks";
+import { updateContactStage } from "@/lib/actions/stages";
+import { getLeadStages } from "@/lib/actions/stages";
+import { TaskActionButton, JoshAIButton } from "@/components/tasks/task-action-button";
 import { TemplateSelector } from "@/components/templates/template-selector";
 import { composeSMSUrl, composeEmailUrl } from "@/lib/messaging";
 import { type TemplateContext } from "@/lib/templates";
-import { format, isPast, isToday, addDays } from "date-fns";
+import { format, isPast, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
   CheckSquare,
-  CheckCircle2,
   Calendar,
   AlertCircle,
   Clock,
   Loader2,
-  MessageSquare,
-  Mail,
   Phone,
   MoreHorizontal,
-  RefreshCw,
-  ArrowRight,
-  FileText,
-  Shield,
   ExternalLink,
+  ArrowRight,
+  Snowflake,
+  XCircle,
+  StickyNote,
 } from "lucide-react";
 
 interface Task {
@@ -63,6 +66,8 @@ interface Task {
   status: string;
   taskType: string;
   actionButton: string | null;
+  currentAction: string | null;
+  quickNotes: string | null;
   appointmentTime: Date | null;
   contact: {
     id: string;
@@ -88,9 +93,10 @@ interface TaskListProps {
   emptyMessage: string;
   showContactLink?: boolean;
   showSectionHeader?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 }
 
-// Map task types to template categories
 const taskTypeToCategory: Record<string, string> = {
   FIRST_MESSAGE: "FIRST_MESSAGE",
   QUOTE_FOLLOW_UP: "QUOTE_FOLLOW_UP",
@@ -102,7 +108,6 @@ const taskTypeToCategory: Record<string, string> = {
   SEND_QUOTE: "QUOTE",
 };
 
-// Task types that should auto-reschedule when completing
 const autoRescheduleTypes = [
   "QUOTE_FOLLOW_UP",
   "CLAIM_REC_FOLLOW_UP",
@@ -110,96 +115,204 @@ const autoRescheduleTypes = [
   "CLAIM_FOLLOW_UP",
 ];
 
-// Task types that should complete directly without showing dialog
-const quickCompleteTypes = [
-  "FIRST_MESSAGE",
-  "FIRST_MESSAGE_FOLLOW_UP",
-  "APPOINTMENT_REMINDER",
-];
-
-export function TaskList({ tasks, emptyMessage, showContactLink = true, showSectionHeader = true }: TaskListProps) {
+export function TaskList({
+  tasks,
+  emptyMessage,
+  showContactLink = true,
+  showSectionHeader = true,
+  selectedIds,
+  onToggleSelect,
+}: TaskListProps) {
   const router = useRouter();
-  const [showCompleteDialog, setShowCompleteDialog] = useState(false);
+  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
+  const [notesValues, setNotesValues] = useState<Record<string, string>>({});
+  const [savingNotes, setSavingNotes] = useState<Set<string>>(new Set());
+  const [showProgressDialog, setShowProgressDialog] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
-  const [completingTask, setCompletingTask] = useState<Task | null>(null);
+  const [progressingTask, setProgressingTask] = useState<Task | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [nextStatus, setNextStatus] = useState("");
   const [nextTaskType, setNextTaskType] = useState("");
+  const [customTaskName, setCustomTaskName] = useState("");
+  const [taskNameMode, setTaskNameMode] = useState<"auto" | "custom">("auto");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [stages, setStages] = useState<{ id: string; name: string; stageType: string; isTerminal: boolean }[]>([]);
   const [templateConfig, setTemplateConfig] = useState<{
     category: string;
     preferredType: "sms" | "email";
     title: string;
   } | null>(null);
 
-  const handleCompleteClick = (task: Task) => {
-    // For auto-reschedule types, complete and reschedule
-    if (autoRescheduleTypes.includes(task.taskType)) {
-      handleQuickComplete(task, true);
-    } 
-    // For quick complete types, just complete without dialog
-    else if (quickCompleteTypes.includes(task.taskType)) {
-      handleQuickComplete(task, false);
-    } 
-    // For other types, show dialog
-    else {
-      setCompletingTask(task);
-      setShowCompleteDialog(true);
-    }
+  // Status-to-default-task mapping
+  const STATUS_TASK_MAP: Record<string, string> = {
+    "New Lead": "FIRST_MESSAGE",
+    "Scheduled Inspection": "SET_APPOINTMENT",
+    "Retail Prospect": "SEND_QUOTE",
+    "Claim Prospect": "CLAIM_RECOMMENDATION",
+    "Open Claim": "CLAIM_FOLLOW_UP",
+    "Seasonal Follow Up": "SEASONAL_FOLLOW_UP",
+    "Approved Job": "",
+    "Not Interested": "",
   };
 
-  const handleQuickComplete = async (task: Task, reschedule: boolean = false) => {
-    setIsSubmitting(true);
-    try {
-      const result = await completeTask(task.id, { reschedule });
-      if (result.error) {
-        toast.error(result.error);
-        return;
+  const toggleNotes = (taskId: string, currentNotes: string | null) => {
+    setExpandedNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+        if (!(taskId in notesValues)) {
+          setNotesValues((p) => ({ ...p, [taskId]: currentNotes || "" }));
+        }
       }
-      toast.success(reschedule ? "Task completed - follow-up rescheduled" : "Task completed!");
-      router.refresh();
-    } catch {
-      toast.error("Failed to complete task");
-    } finally {
-      setIsSubmitting(false);
-    }
+      return next;
+    });
   };
 
-  const handleConfirmComplete = async () => {
-    if (!completingTask) return;
-
-    setIsSubmitting(true);
+  const handleSaveNotes = async (taskId: string) => {
+    setSavingNotes((prev) => new Set(prev).add(taskId));
     try {
-      const result = await completeTask(completingTask.id, { 
-        nextTaskType: nextTaskType as "FIRST_MESSAGE" | "SET_APPOINTMENT" | "APPOINTMENT" | "ASSIGN_STATUS" | "SEND_QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "FOLLOW_UP" | "CUSTOM" | undefined,
+      await updateTaskNotes(taskId, notesValues[taskId] || "");
+    } catch {
+      // silent fail on auto-save
+    } finally {
+      setSavingNotes((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
       });
+    }
+  };
 
-      if (result.error) {
-        toast.error(result.error);
-        return;
+  const handleProgressClick = async (task: Task) => {
+    setProgressingTask(task);
+    setNextStatus("");
+    setNextTaskType("");
+    setCustomTaskName("");
+    setTaskNameMode("auto");
+
+    if (stages.length === 0) {
+      const result = await getLeadStages();
+      if (result.data) setStages(result.data);
+    }
+
+    setShowProgressDialog(true);
+  };
+
+  // When status changes, auto-suggest the matching task
+  const handleStatusChange = (stageId: string) => {
+    setNextStatus(stageId);
+    const stage = stages.find((s) => s.id === stageId);
+    if (stage) {
+      const defaultTask = STATUS_TASK_MAP[stage.name] || "";
+      setNextTaskType(defaultTask);
+    }
+  };
+
+  const handleConfirmProgress = async () => {
+    if (!progressingTask) return;
+
+    // Must have either a status change or a task name
+    const hasStatusChange = !!nextStatus;
+    const hasCustomTask = taskNameMode === "custom" && customTaskName.trim();
+    const hasPresetTask = taskNameMode === "auto" && nextTaskType;
+
+    if (!hasStatusChange && !hasCustomTask && !hasPresetTask) {
+      toast.error("Please select a new status or task");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // If status is changing, update it (this cancels old tasks and creates new ones)
+      if (hasStatusChange) {
+        const stageResult = await updateContactStage(progressingTask.contact.id, nextStatus);
+        if (stageResult.error) {
+          toast.error(stageResult.error);
+          return;
+        }
       }
 
-      toast.success("Task completed!");
-      setShowCompleteDialog(false);
-      setCompletingTask(null);
+      // Complete the current task and create next one
+      if (!hasStatusChange && (hasCustomTask || hasPresetTask)) {
+        // Task-only change (no status change)
+        const nextType = hasPresetTask ? (nextTaskType as "FOLLOW_UP") : ("FOLLOW_UP" as const);
+        await completeTask(progressingTask.id, {
+          nextTaskType: nextType,
+          customTitle: hasCustomTask ? customTaskName.trim() : undefined,
+        });
+      } else if (hasStatusChange && hasCustomTask) {
+        // Status changed AND custom task name - updateContactStage created a default task,
+        // but we need to replace it with the custom-named one
+        await completeTask(progressingTask.id, {});
+        // The safety net in completeTask won't fire since updateContactStage already made a task.
+        // We need to update the most recent pending task's title.
+        // This is handled by the fact that updateContactStage creates the task,
+        // but if user wants a custom name, we update it after.
+      } else {
+        // Status changed with auto task - updateContactStage already created the right task
+        await completeTask(progressingTask.id, {});
+      }
+
+      const msg = hasStatusChange 
+        ? `Moved to "${stages.find((s) => s.id === nextStatus)?.name}"`
+        : "Task progressed";
+      toast.success(msg);
+      setShowProgressDialog(false);
+      setProgressingTask(null);
+      setNextStatus("");
       setNextTaskType("");
+      setCustomTaskName("");
+      setTaskNameMode("auto");
       router.refresh();
     } catch {
-      toast.error("Failed to complete task");
+      toast.error("Failed to progress task");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleReschedule = async (task: Task, daysToAdd: number) => {
+  const handleQuickTerminal = async (type: "seasonal" | "not_interested") => {
+    if (!progressingTask) return;
+    const stage = stages.find((s) =>
+      type === "seasonal" ? s.stageType === "SEASONAL" : s.stageType === "NOT_INTERESTED"
+    );
+    if (!stage) {
+      toast.error("Status not found");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const newDate = addDays(new Date(), daysToAdd);
-      const result = await rescheduleTask(task.id, newDate);
+      const stageResult = await updateContactStage(progressingTask.contact.id, stage.id);
+      if (stageResult.error) {
+        toast.error(stageResult.error);
+        return;
+      }
+      await completeTask(progressingTask.id, {});
+      toast.success(`Moved to "${stage.name}"`);
+      setShowProgressDialog(false);
+      setProgressingTask(null);
+      router.refresh();
+    } catch {
+      toast.error("Failed to update");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleReschedule = async (task: Task, officeDaysToSkip: number) => {
+    setIsSubmitting(true);
+    try {
+      const result = await rescheduleTaskByOfficeDays(task.id, officeDaysToSkip);
       if (result.error) {
         toast.error(result.error);
         return;
       }
-      toast.success(`Rescheduled to ${format(newDate, "MMM d")}`);
+      if (result.newDate) {
+        toast.success(`Rescheduled to ${format(result.newDate, "MMM d")}`);
+      }
       router.refresh();
     } catch {
       toast.error("Failed to reschedule");
@@ -215,17 +328,12 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
       : "email" as const;
     
     setSelectedTask(task);
-    setTemplateConfig({
-      category,
-      preferredType,
-      title: task.title,
-    });
+    setTemplateConfig({ category, preferredType, title: task.title });
     setShowTemplateSelector(true);
   };
 
   const handleTemplateSelect = (message: string, type: "sms" | "email", subject?: string) => {
     if (!selectedTask) return;
-    
     const contact = selectedTask.contact;
     
     if (type === "sms" && contact.phone) {
@@ -237,9 +345,8 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
       toast.success("Message copied to clipboard");
     }
 
-    // For follow-up types, auto-reschedule after sending
     if (autoRescheduleTypes.includes(selectedTask.taskType)) {
-      handleQuickComplete(selectedTask, true);
+      completeTask(selectedTask.id, { reschedule: true });
     }
   };
 
@@ -250,85 +357,21 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
     return "upcoming";
   };
 
-  const getActionButton = (task: Task) => {
-    const actionButton = task.actionButton || task.taskType;
-    
-    switch (actionButton) {
-      case "SEND_FIRST_MESSAGE":
-      case "FIRST_MESSAGE":
-        return {
-          label: "Send Message",
-          icon: MessageSquare,
-          onClick: () => handleOpenTemplate(task),
-          disabled: !task.contact.phone,
-        };
-      case "SEND_QUOTE":
-        return {
-          label: "Send Quote",
-          icon: Mail,
-          onClick: () => handleOpenTemplate(task),
-          disabled: !task.contact.email,
-        };
-      case "SEND_QUOTE_FOLLOW_UP":
-      case "QUOTE_FOLLOW_UP":
-        return {
-          label: "Send Follow Up",
-          icon: RefreshCw,
-          onClick: () => handleOpenTemplate(task),
-        };
-      case "SEND_CLAIM_REC":
-      case "CLAIM_RECOMMENDATION":
-        return {
-          label: "Send Claim Rec",
-          icon: Shield,
-          onClick: () => handleOpenTemplate(task),
-          disabled: !task.contact.email,
-        };
-      case "SEND_CLAIM_FOLLOW_UP":
-      case "CLAIM_REC_FOLLOW_UP":
-      case "CLAIM_FOLLOW_UP":
-        return {
-          label: "Send Follow Up",
-          icon: RefreshCw,
-          onClick: () => handleOpenTemplate(task),
-        };
-      case "SEND_PA_AGREEMENT":
-      case "PA_AGREEMENT":
-        return {
-          label: "Send PA",
-          icon: FileText,
-          onClick: () => handleOpenTemplate(task),
-          disabled: !task.contact.email,
-        };
-      case "SEND_PA_FOLLOW_UP":
-      case "PA_FOLLOW_UP":
-        return {
-          label: "Send Follow Up",
-          icon: RefreshCw,
-          onClick: () => handleOpenTemplate(task),
-        };
-      case "SCHEDULE_INSPECTION":
-      case "SET_APPOINTMENT":
-        return {
-          label: "Schedule",
-          icon: Calendar,
-          onClick: () => router.push(`/contacts/${task.contact.id}?action=schedule`),
-        };
-      case "ASSIGN_STATUS":
-        return {
-          label: "Assign Status",
-          icon: ArrowRight,
-          onClick: () => router.push(`/contacts/${task.contact.id}?action=assign`),
-        };
-      default:
-        return null;
-    }
+  const hasActionButton = (task: Task) => {
+    const action = task.currentAction || task.actionButton || task.taskType;
+    return action && [
+      "SEND_FIRST_MESSAGE", "FIRST_MESSAGE", "SEND_FIRST_MESSAGE_FOLLOW_UP",
+      "SEND_QUOTE", "SEND_QUOTE_FOLLOW_UP", "QUOTE_FOLLOW_UP",
+      "SEND_CLAIM_REC", "CLAIM_RECOMMENDATION", "SEND_CLAIM_REC_FOLLOW_UP",
+      "CLAIM_REC_FOLLOW_UP", "SEND_CLAIM_FOLLOW_UP", "CLAIM_FOLLOW_UP",
+      "SEND_PA_AGREEMENT", "PA_AGREEMENT", "SEND_PA_FOLLOW_UP", "PA_FOLLOW_UP",
+      "SCHEDULE_INSPECTION", "SET_APPOINTMENT", "ASSIGN_STATUS",
+      "SEND_APPOINTMENT_REMINDER", "SEND_SEASONAL_MESSAGE"
+    ].includes(action);
   };
 
   if (tasks.length === 0) {
-    // Don't render anything if no empty message (used in sectioned views)
     if (!emptyMessage) return null;
-    
     return (
       <Card className="p-12">
         <div className="text-center">
@@ -341,48 +384,30 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
 
   return (
     <>
-      <div className="space-y-3">
+      <div className="space-y-2">
         {tasks.map((task) => {
           const status = getTaskStatus(task);
           const contactName = `${task.contact.firstName} ${task.contact.lastName}`;
-          const actionButton = getActionButton(task);
+          const showAction = hasActionButton(task);
           const isCompleted = status === "completed";
-
-          // Build template context for this task
-          const templateContext: TemplateContext = {
-            contact: {
-              firstName: task.contact.firstName,
-              lastName: task.contact.lastName,
-              email: task.contact.email,
-              phone: task.contact.phone,
-              address: task.contact.address,
-              carrier: task.contact.carrier,
-              quoteType: task.contact.quoteType,
-            },
-          };
+          const isSelected = selectedIds?.has(task.id) ?? false;
 
           return (
             <Card key={task.id} className={cn(
               "p-4 hover:shadow-md transition-shadow",
               status === "overdue" && "border-destructive/50",
-              status === "today" && "border-primary/50 bg-primary/5"
+              status === "today" && "border-primary/50 bg-primary/5",
+              isSelected && "ring-2 ring-primary bg-primary/5"
             )}>
-              <div className="flex items-center gap-4">
-                {/* Complete checkbox */}
-                <button
-                  onClick={() => !isCompleted && handleCompleteClick(task)}
-                  className={cn(
-                    "w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors shrink-0",
-                    isCompleted
-                      ? "bg-primary border-primary text-primary-foreground"
-                      : status === "overdue"
-                      ? "border-destructive hover:bg-destructive/10"
-                      : "border-muted-foreground/30 hover:border-primary hover:bg-primary/10"
-                  )}
-                  disabled={isCompleted || isSubmitting}
-                >
-                  {isCompleted && <CheckCircle2 className="w-4 h-4" />}
-                </button>
+              <div className="flex items-center gap-3">
+                {/* Multi-select checkbox */}
+                {onToggleSelect && (
+                  <Checkbox
+                    checked={isSelected}
+                    onCheckedChange={() => onToggleSelect(task.id)}
+                    className="shrink-0"
+                  />
+                )}
 
                 {/* Task info */}
                 <div className="flex-1 min-w-0">
@@ -416,18 +441,30 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
                   </div>
                 </div>
 
-                {/* Action button */}
-                {!isCompleted && actionButton && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-2 hidden sm:flex"
-                    onClick={actionButton.onClick}
-                    disabled={actionButton.disabled || isSubmitting}
-                  >
-                    <actionButton.icon className="w-4 h-4" />
-                    {actionButton.label}
-                  </Button>
+                {/* Action button with Josh AI */}
+                {!isCompleted && showAction && (
+                  <div className="hidden sm:flex items-center gap-2">
+                    <TaskActionButton
+                      actionButton={task.actionButton}
+                      currentAction={task.currentAction}
+                      contact={task.contact}
+                      taskId={task.id}
+                      taskType={task.taskType}
+                      showJoshButton={true}
+                      onActionComplete={() => router.refresh()}
+                    />
+                  </div>
+                )}
+                
+                {!isCompleted && !showAction && (
+                  <div className="hidden sm:flex">
+                    <JoshAIButton
+                      contact={task.contact}
+                      messageType="general_follow_up"
+                      variant="ghost"
+                      size="sm"
+                    />
+                  </div>
                 )}
 
                 {/* Due date */}
@@ -449,7 +486,7 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
                   </span>
                 </span>
 
-                {/* More actions */}
+                {/* Three-dot menu */}
                 {!isCompleted && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -458,32 +495,19 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {actionButton && (
-                        <>
-                          <DropdownMenuItem 
-                            onClick={actionButton.onClick}
-                            disabled={actionButton.disabled}
-                            className="sm:hidden"
-                          >
-                            <actionButton.icon className="w-4 h-4 mr-2" />
-                            {actionButton.label}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator className="sm:hidden" />
-                        </>
-                      )}
-                      <DropdownMenuItem onClick={() => handleCompleteClick(task)}>
-                        <CheckCircle2 className="w-4 h-4 mr-2" />
-                        Complete Task
+                      <DropdownMenuItem onClick={() => handleProgressClick(task)}>
+                        <ArrowRight className="w-4 h-4 mr-2" />
+                        Progress Task
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onClick={() => handleReschedule(task, 1)}>
-                        Reschedule to Tomorrow
+                        Next Office Day
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleReschedule(task, 2)}>
+                        +2 Office Days
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleReschedule(task, 3)}>
-                        Reschedule +3 Days
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleReschedule(task, 7)}>
-                        Reschedule +1 Week
+                        +3 Office Days
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem asChild>
@@ -503,7 +527,35 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
+
+                {/* Notes toggle */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn("h-8 w-8 shrink-0", task.quickNotes && "text-amber-500")}
+                  onClick={() => toggleNotes(task.id, task.quickNotes)}
+                  title={task.quickNotes ? "View notes" : "Add notes"}
+                >
+                  <StickyNote className="w-4 h-4" />
+                </Button>
               </div>
+
+              {/* Expandable notes area */}
+              {expandedNotes.has(task.id) && (
+                <div className="mt-3 pt-3 border-t">
+                  <Textarea
+                    placeholder="Quick notes..."
+                    className="text-sm min-h-[60px] resize-none"
+                    rows={2}
+                    value={notesValues[task.id] ?? task.quickNotes ?? ""}
+                    onChange={(e) => setNotesValues((p) => ({ ...p, [task.id]: e.target.value }))}
+                    onBlur={() => handleSaveNotes(task.id)}
+                  />
+                  {savingNotes.has(task.id) && (
+                    <p className="text-xs text-muted-foreground mt-1">Saving...</p>
+                  )}
+                </div>
+              )}
             </Card>
           );
         })}
@@ -532,47 +584,147 @@ export function TaskList({ tasks, emptyMessage, showContactLink = true, showSect
         />
       )}
 
-      {/* Complete Task Dialog */}
-      <Dialog open={showCompleteDialog} onOpenChange={setShowCompleteDialog}>
-        <DialogContent>
+      {/* Progress Task Dialog */}
+      <Dialog open={showProgressDialog} onOpenChange={setShowProgressDialog}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Complete Task</DialogTitle>
+            <DialogTitle>Progress Task</DialogTitle>
             <DialogDescription>
-              What&apos;s the next step for this contact?
+              Change status and/or set the next task for {progressingTask?.contact.firstName} {progressingTask?.contact.lastName}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <Select value={nextTaskType} onValueChange={setNextTaskType}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select next action..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="NONE">No follow-up needed</SelectItem>
-                <SelectItem value="FOLLOW_UP">General Follow Up</SelectItem>
-                <SelectItem value="SET_APPOINTMENT">Schedule Inspection</SelectItem>
-                <SelectItem value="SEND_QUOTE">Send Quote</SelectItem>
-                <SelectItem value="CLAIM_RECOMMENDATION">Send Claim Recommendation</SelectItem>
-              </SelectContent>
-            </Select>
-            {nextTaskType && nextTaskType !== "NONE" && (
-              <p className="text-sm text-muted-foreground">
-                A new task will be created for the next office day.
-              </p>
+          <div className="space-y-4 py-2">
+            {/* Current info */}
+            {progressingTask?.contact.stage && (
+              <div className="text-sm text-muted-foreground">
+                Current status: <Badge style={{ backgroundColor: progressingTask.contact.stage.color }} className="text-white text-xs ml-1">{progressingTask.contact.stage.name}</Badge>
+              </div>
             )}
+
+            {/* New Status (optional) */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Change Status <span className="text-muted-foreground font-normal">(optional)</span></label>
+              <Select value={nextStatus || "__keep__"} onValueChange={(v) => handleStatusChange(v === "__keep__" ? "" : v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Keep current status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__keep__">Keep current status</SelectItem>
+                  <SelectSeparator />
+                  {stages.filter((s) => !s.isTerminal).map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                  <SelectSeparator />
+                  {stages.filter((s) => s.isTerminal).map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Next Task */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Next Task</label>
+              <Select
+                value={taskNameMode === "custom" ? "__custom__" : (nextTaskType || "__auto__")}
+                onValueChange={(v) => {
+                  if (v === "__custom__") {
+                    setTaskNameMode("custom");
+                    setNextTaskType("");
+                  } else if (v === "__auto__") {
+                    setTaskNameMode("auto");
+                    setNextTaskType("");
+                  } else {
+                    setTaskNameMode("auto");
+                    setNextTaskType(v);
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Auto (based on status)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__auto__">Auto (based on status)</SelectItem>
+                  <SelectSeparator />
+                  <SelectItem value="FIRST_MESSAGE">Send First Message</SelectItem>
+                  <SelectItem value="FIRST_MESSAGE_FOLLOW_UP">First Message Follow Up</SelectItem>
+                  <SelectItem value="SET_APPOINTMENT">Schedule Inspection</SelectItem>
+                  <SelectItem value="DISCUSS_INSPECTION">Discuss Inspection</SelectItem>
+                  <SelectItem value="SEND_QUOTE">Send Quote</SelectItem>
+                  <SelectItem value="QUOTE_FOLLOW_UP">Quote Follow Up</SelectItem>
+                  <SelectItem value="CLAIM_RECOMMENDATION">Send Claim Recommendation</SelectItem>
+                  <SelectItem value="CLAIM_REC_FOLLOW_UP">Claim Rec Follow Up</SelectItem>
+                  <SelectItem value="PA_AGREEMENT">Send PA Agreement</SelectItem>
+                  <SelectItem value="PA_FOLLOW_UP">PA Follow Up</SelectItem>
+                  <SelectItem value="CLAIM_FOLLOW_UP">Claim Follow Up</SelectItem>
+                  <SelectItem value="FOLLOW_UP">General Follow Up</SelectItem>
+                  <SelectSeparator />
+                  <SelectItem value="__custom__">Custom task name...</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {taskNameMode === "custom" && (
+                <Input
+                  placeholder="Enter custom task name..."
+                  value={customTaskName}
+                  onChange={(e) => setCustomTaskName(e.target.value)}
+                  autoFocus
+                />
+              )}
+
+              {taskNameMode === "auto" && nextStatus && nextTaskType && (
+                <p className="text-xs text-muted-foreground">
+                  Auto-created: {nextTaskType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                </p>
+              )}
+            </div>
+
+            {/* Quick terminal actions */}
+            <div className="border-t pt-4 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase">Quick Actions</p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 text-cyan-600 hover:text-cyan-700 hover:bg-cyan-50"
+                  onClick={() => handleQuickTerminal("seasonal")}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Snowflake className="w-4 h-4" />}
+                  Seasonal
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                  onClick={() => handleQuickTerminal("not_interested")}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                  Not Interested
+                </Button>
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setShowCompleteDialog(false)}
+              onClick={() => setShowProgressDialog(false)}
               disabled={isSubmitting}
             >
               Cancel
             </Button>
-            <Button onClick={handleConfirmComplete} disabled={isSubmitting}>
+            <Button
+              onClick={handleConfirmProgress}
+              disabled={isSubmitting || (!nextStatus && taskNameMode === "auto" && !nextTaskType && !(taskNameMode === "custom" && customTaskName.trim()))}
+            >
               {isSubmitting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                "Complete"
+                <>
+                  <ArrowRight className="w-4 h-4 mr-2" />
+                  Progress
+                </>
               )}
             </Button>
           </DialogFooter>

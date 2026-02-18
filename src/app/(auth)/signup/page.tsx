@@ -67,7 +67,7 @@ export default function SignupPage() {
       <CardHeader className="text-center">
         <CardTitle className="text-2xl">Create an account</CardTitle>
         <CardDescription>
-          Get started with Orbit for free
+          Get started with Relay for free
         </CardDescription>
       </CardHeader>
       

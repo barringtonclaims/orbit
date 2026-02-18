@@ -25,12 +25,11 @@ import {
   LogOut,
   Menu,
   Building2,
-  ChevronDown,
   UserCircle,
-  Plus,
   Calendar as CalendarIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { OrganizationSwitcher } from "./organization-switcher";
 
 interface SidebarProps {
   user: {
@@ -88,51 +87,14 @@ export function Sidebar({ user, organization }: SidebarProps) {
           <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center">
             <div className="w-3.5 h-3.5 rounded-full bg-primary-foreground" />
           </div>
-          <span className="text-xl font-bold">Orbit</span>
+          <span className="text-xl font-bold">Relay</span>
         </Link>
       </div>
 
-      {/* Organization Selector */}
-      {organization && (
-        <div className="px-3 mb-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                className="w-full justify-between h-auto py-2 px-3"
-              >
-                <div className="flex items-center gap-2 text-left">
-                  <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center">
-                    <Building2 className="w-4 h-4 text-primary" />
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium truncate max-w-[120px]">
-                      {organization.name}
-                    </span>
-                    <span className="text-xs text-muted-foreground capitalize">
-                      {organization.role.toLowerCase()}
-                    </span>
-                  </div>
-                </div>
-                <ChevronDown className="w-4 h-4 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
-              <DropdownMenuLabel>Organizations</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <Building2 className="w-4 h-4 mr-2" />
-                {organization.name}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <Plus className="w-4 h-4 mr-2" />
-                Create organization
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      )}
+      {/* Organization Switcher */}
+      <div className="px-3 mb-2">
+        <OrganizationSwitcher currentOrg={organization || null} />
+      </div>
 
       <Separator className="mb-2" />
 
@@ -260,7 +222,7 @@ export function Sidebar({ user, organization }: SidebarProps) {
           <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
             <div className="w-3 h-3 rounded-full bg-primary-foreground" />
           </div>
-          <span className="text-lg font-bold">Orbit</span>
+          <span className="text-lg font-bold">Relay</span>
         </Link>
 
         <div className="ml-auto">

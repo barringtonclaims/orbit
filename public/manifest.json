@@ -1,7 +1,7 @@
 {
-  "name": "Orbit - Contact & Task Management",
-  "short_name": "Orbit",
-  "description": "Streamline your sales workflow with intelligent contact management and automated follow-ups",
+  "name": "Relay - Smart CRM for Contractors",
+  "short_name": "Relay",
+  "description": "Keep every customer moving through your pipeline. AI-powered follow-ups, carrier management, and smart scheduling.",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#09090b",
@@ -36,5 +36,3 @@
     }
   ]
 }
-
-

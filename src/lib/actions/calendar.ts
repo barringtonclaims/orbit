@@ -4,9 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
 import { startOfMonth, endOfMonth } from "date-fns";
 import { 
-  getGoogleAuthUrl, 
   isGoogleCalendarConnected, 
-  disconnectGoogleCalendar,
   createCalendarEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
@@ -90,21 +88,6 @@ export async function getCalendarEvents(month?: Date) {
 }
 
 /**
- * Get Google Calendar OAuth URL for connecting
- */
-export async function getGoogleCalendarAuthUrl() {
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  
-  if (authError || !user) {
-    return { error: "Unauthorized", data: null };
-  }
-
-  const authUrl = getGoogleAuthUrl(user.id);
-  return { data: authUrl };
-}
-
-/**
  * Check if user has connected Google Calendar
  */
 export async function checkGoogleCalendarConnection() {
@@ -117,26 +100,6 @@ export async function checkGoogleCalendarConnection() {
 
   const isConnected = await isGoogleCalendarConnected(user.id);
   return { data: { isConnected } };
-}
-
-/**
- * Disconnect Google Calendar
- */
-export async function disconnectGoogleCalendarAction() {
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  
-  if (authError || !user) {
-    return { error: "Unauthorized" };
-  }
-
-  try {
-    await disconnectGoogleCalendar(user.id);
-    return { success: true };
-  } catch (error) {
-    console.error("Error disconnecting Google Calendar:", error);
-    return { error: "Failed to disconnect Google Calendar" };
-  }
 }
 
 /**

@@ -7,6 +7,9 @@ import { generateTaskTitle, getActionButtonForTaskType } from "@/lib/scheduling"
 import { Prisma } from "@prisma/client";
 import { createDefaultStages } from "./stages";
 
+// Type for all action buttons
+type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
+
 export interface CreateContactInput {
   firstName: string;
   lastName: string;
@@ -87,11 +90,21 @@ export async function createContact(input: CreateContactInput) {
       });
     }
 
-    // Get user's organization membership (if any)
-    const membership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
-      include: { organization: true },
-    });
+    // Get user's ACTIVE organization
+    let membership;
+    if (dbUser.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id, organizationId: dbUser.activeOrganizationId },
+        include: { organization: true },
+      });
+    }
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        include: { organization: true },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
 
     let organizationId = membership?.organizationId;
 
@@ -181,7 +194,8 @@ export async function createContact(input: CreateContactInput) {
         dueDate: today,
         status: "PENDING",
         taskType: "FIRST_MESSAGE",
-        actionButton: actionButton as "SEND_FIRST_MESSAGE" | "SCHEDULE_INSPECTION" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "UPLOAD_PA" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | null,
+        actionButton: actionButton as ActionButtonType,
+        currentAction: actionButton as ActionButtonType,
       },
     });
 
@@ -210,14 +224,34 @@ export async function getContacts(options?: {
   }
 
   try {
-    // Get user's organization membership
-    const membership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
+    // Get user's ACTIVE organization (respects activeOrganizationId)
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
     });
+
+    // Try to get active organization membership
+    let membership;
+    if (dbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { 
+          userId: user.id,
+          organizationId: dbUser.activeOrganizationId,
+        },
+      });
+    }
+
+    // Fall back to first organization
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
 
     // If no membership, return empty
     if (!membership) {
-        return { data: [] };
+      return { data: [] };
     }
 
     const where: Prisma.ContactWhereInput = {

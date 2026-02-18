@@ -6,9 +6,12 @@ import {
   Calendar, 
   MessageSquare, 
   ArrowRight,
-  Zap,
+  Sparkles,
   Shield,
-  Smartphone
+  Smartphone,
+  Upload,
+  Building2,
+  Bot
 } from "lucide-react";
 
 export default function HomePage() {
@@ -21,7 +24,7 @@ export default function HomePage() {
             <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
               <div className="w-3 h-3 rounded-full bg-primary-foreground" />
             </div>
-            <span className="text-xl font-bold">Orbit</span>
+            <span className="text-xl font-bold">Relay</span>
           </Link>
           <div className="flex items-center gap-4">
             <Link href="/login">
@@ -38,24 +41,24 @@ export default function HomePage() {
       <section className="pt-32 pb-20 px-4">
         <div className="container mx-auto text-center max-w-4xl">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-accent text-accent-foreground text-sm font-medium mb-8 animate-fade-in">
-            <Zap className="w-4 h-4" />
-            Built for salespeople, by salespeople
+            <Sparkles className="w-4 h-4" />
+            Smart CRM for contractors
           </div>
           
           <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6 animate-fade-in stagger-1">
-            Never let a lead
-            <span className="gradient-text"> fall through the cracks</span>
+            Your leads, organized.
+            <span className="gradient-text"> Your follow-ups, automatic.</span>
           </h1>
           
           <p className="text-xl text-muted-foreground mb-10 max-w-2xl mx-auto animate-fade-in stagger-2">
-            Orbit automates your follow-up workflow so you can focus on closing deals. 
-            Every contact has a task until it&apos;s done.
+            Relay keeps every customer moving through your pipeline &mdash; from first contact 
+            to final invoice. AI-powered follow-ups, carrier management, and smart scheduling.
           </p>
           
           <div className="flex flex-col sm:flex-row gap-4 justify-center animate-fade-in stagger-3">
             <Link href="/signup">
               <Button size="lg" className="text-lg px-8 gap-2">
-                Start for free
+                Start managing your pipeline
                 <ArrowRight className="w-5 h-5" />
               </Button>
             </Link>
@@ -71,40 +74,59 @@ export default function HomePage() {
       {/* Features Grid */}
       <section className="py-20 px-4 bg-muted/50">
         <div className="container mx-auto max-w-6xl">
-          <h2 className="text-3xl font-bold text-center mb-12">
-            Everything you need to manage leads
+          <h2 className="text-3xl font-bold text-center mb-4">
+            Everything you need to run your business
           </h2>
+          <p className="text-center text-muted-foreground mb-12 max-w-2xl mx-auto">
+            Built for roofing contractors, home service pros, and claims professionals who need 
+            to stay on top of every lead without letting anything slip.
+          </p>
           
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             <FeatureCard
-              icon={<Users className="w-6 h-6" />}
-              title="Contact Management"
-              description="Store all lead info, photos, documents, and notes in one organized timeline."
+              icon={<Bot className="w-6 h-6" />}
+              title="Josh AI Assistant"
+              description="AI that reads your emails, creates leads from AccuLynx, and drafts follow-ups automatically."
             />
             <FeatureCard
               icon={<CheckCircle2 className="w-6 h-6" />}
-              title="Smart Task Scheduling"
-              description="Tasks auto-schedule to M/W/F so your week stays organized and predictable."
-            />
-            <FeatureCard
-              icon={<Calendar className="w-6 h-6" />}
-              title="Calendar Integration"
-              description="Schedule inspections and appointments that sync with your calendar."
-            />
-            <FeatureCard
-              icon={<MessageSquare className="w-6 h-6" />}
-              title="Quick Messaging"
-              description="Send personalized texts and emails with one tap using templates."
+              title="Office-Day Scheduling"
+              description="Tasks auto-schedule to your office days. Every customer always has a next step."
             />
             <FeatureCard
               icon={<Shield className="w-6 h-6" />}
-              title="Team Management"
-              description="Assign leads, track progress, and keep your team accountable."
+              title="Carrier Follow-Ups"
+              description="AI-drafted carrier emails with smart routing -- unified inboxes or per-adjuster, you choose."
+            />
+            <FeatureCard
+              icon={<Users className="w-6 h-6" />}
+              title="Pipeline Management"
+              description="Track every lead from New Lead through Inspection, Quote, Claim, and Approval."
+            />
+            <FeatureCard
+              icon={<Upload className="w-6 h-6" />}
+              title="CSV Import"
+              description="Upload your existing customer list and be running in minutes. Smart duplicate detection included."
+            />
+            <FeatureCard
+              icon={<Calendar className="w-6 h-6" />}
+              title="Google Calendar Sync"
+              description="Inspections and appointments sync directly to your Google Calendar."
+            />
+            <FeatureCard
+              icon={<MessageSquare className="w-6 h-6" />}
+              title="Templates & Messaging"
+              description="Pre-built SMS and email templates for every stage. Personalize with one tap."
+            />
+            <FeatureCard
+              icon={<Building2 className="w-6 h-6" />}
+              title="Multi-Organization"
+              description="Run multiple businesses from one account. Each with its own customers, tasks, and Google integration."
             />
             <FeatureCard
               icon={<Smartphone className="w-6 h-6" />}
-              title="Mobile First"
-              description="Works beautifully on any device. Add to home screen for app-like experience."
+              title="Mobile Ready"
+              description="Works on any device. Add to your home screen for an app-like experience."
             />
           </div>
         </div>
@@ -114,14 +136,15 @@ export default function HomePage() {
       <section className="py-20 px-4">
         <div className="container mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-bold mb-6">
-            Ready to streamline your workflow?
+            Stop losing leads. Start closing more.
           </h2>
           <p className="text-muted-foreground mb-8">
-            Join sales professionals who use Orbit to stay on top of every lead.
+            Join contractors who use Relay to manage their pipeline and never miss a follow-up.
           </p>
           <Link href="/signup">
-            <Button size="lg" className="text-lg px-8">
+            <Button size="lg" className="text-lg px-8 gap-2">
               Get Started Free
+              <ArrowRight className="w-5 h-5" />
             </Button>
           </Link>
         </div>
@@ -134,10 +157,10 @@ export default function HomePage() {
             <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
               <div className="w-2 h-2 rounded-full bg-primary-foreground" />
             </div>
-            <span className="font-semibold">Orbit</span>
+            <span className="font-semibold">Relay</span>
           </div>
           <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} Barrington Dynamics. All rights reserved.
+            &copy; {new Date().getFullYear()} Barrington Dynamics. All rights reserved.
           </p>
         </div>
       </footer>

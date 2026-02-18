@@ -337,6 +337,26 @@ Best regards,
 {{user_name}}`,
     },
   },
+  CARRIER_FOLLOW_UP: {
+    sms: null,
+    email: {
+      subject: 'Claim #{{claim_number}} - {{full_name}} - Follow Up',
+      body: `To Whom It May Concern,
+
+I am writing to follow up on the above-referenced claim for the property located at {{full_address}}.
+
+The insured, {{full_name}}, filed this claim with {{carrier}} regarding damage that occurred on {{date_of_loss}} (Policy #{{policy_number}}).
+
+We respectfully request an update on the status of this claim. Please let us know if any additional documentation is needed.
+
+Thank you for your prompt attention to this matter.
+
+Regards,
+{{user_name}}
+{{user_email}}
+{{user_phone}}`,
+    },
+  },
   SEASONAL: {
     sms: `Hi {{first_name}}, it's {{user_name}} reaching out about your property at {{address}}. As we head into the new season, I wanted to check if you're ready to move forward with your roof project. Give me a call when you have a chance!`,
     email: {

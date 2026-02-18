@@ -28,6 +28,9 @@ import {
 import { formatDistanceToNow, format } from "date-fns";
 import { STAGE_NAMES } from "@/types";
 
+// Disable static caching - always fetch fresh data
+export const dynamic = "force-dynamic";
+
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { data: contact } = await getContact(id);
@@ -106,7 +109,7 @@ export default async function ContactDetailPage({
             </div>
             <p className="text-muted-foreground">
               Added {formatDistanceToNow(new Date(contact.createdAt), { addSuffix: true })}
-              {contact.source && ` · ${contact.source}`}
+              {contact.source && contact.source.length <= 30 && ` · ${contact.source}`}
             </p>
           </div>
           

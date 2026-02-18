@@ -8,22 +8,24 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getOrganization } from "@/lib/actions/organizations";
 import { getTemplates } from "@/lib/actions/templates";
-import { checkGoogleCalendarConnection } from "@/lib/actions/calendar";
+import { getGoogleConnectionStatus } from "@/lib/actions/google";
 import { ScheduleSettings } from "@/components/settings/schedule-settings";
 import { TemplateSettings } from "@/components/settings/template-settings";
-import { CalendarSettings } from "@/components/settings/calendar-settings";
 import { StageSettings } from "@/components/settings/stage-settings";
+import { GoogleSettings } from "@/components/settings/google-settings";
+import { CarrierSettings } from "@/components/settings/carrier-settings";
+import { JoshIntake } from "@/components/josh/josh-intake";
 import { 
   User, 
-  Mail, 
   Bell, 
   Palette, 
   Shield, 
   Smartphone,
   Check,
   FileText,
-  Calendar,
   Settings2,
+  Plug,
+  Building2,
 } from "lucide-react";
 
 export const metadata = {
@@ -37,15 +39,15 @@ export default async function SettingsPage({
 }) {
   const { tab, success, error } = await searchParams;
   
-  const [orgResult, templatesResult, calendarResult] = await Promise.all([
+  const [orgResult, templatesResult, googleResult] = await Promise.all([
     getOrganization(),
     getTemplates(),
-    checkGoogleCalendarConnection(),
+    getGoogleConnectionStatus(),
   ]);
 
   const org = orgResult.data;
   const templates = templatesResult.data || [];
-  const isGoogleConnected = calendarResult.data?.isConnected || false;
+  const googleStatus = googleResult.data;
 
   const defaultTab = tab || "general";
 
@@ -60,33 +62,37 @@ export default async function SettingsPage({
 
       {/* Success/Error Messages */}
       {success === "google_connected" && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
-          Google Calendar connected successfully!
+        <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 px-4 py-3 rounded-lg">
+          Google account connected successfully! Calendar sync and Josh email processing are now enabled.
         </div>
       )}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+        <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg">
           {error === "google_auth_failed" 
-            ? "Failed to connect Google Calendar. Please try again." 
+            ? "Failed to connect Google account. Please try again." 
             : error}
         </div>
       )}
 
       <Tabs defaultValue={defaultTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="general" className="gap-2">
+        <TabsList className="flex flex-wrap h-auto gap-1 p-1">
+          <TabsTrigger value="general" className="gap-2 flex-1 min-w-fit">
             <Settings2 className="w-4 h-4" />
             <span className="hidden sm:inline">General</span>
           </TabsTrigger>
-          <TabsTrigger value="templates" className="gap-2">
+          <TabsTrigger value="integrations" className="gap-2 flex-1 min-w-fit">
+            <Plug className="w-4 h-4" />
+            <span className="hidden sm:inline">Integrations</span>
+          </TabsTrigger>
+          <TabsTrigger value="carriers" className="gap-2 flex-1 min-w-fit">
+            <Building2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Carriers</span>
+          </TabsTrigger>
+          <TabsTrigger value="templates" className="gap-2 flex-1 min-w-fit">
             <FileText className="w-4 h-4" />
             <span className="hidden sm:inline">Templates</span>
           </TabsTrigger>
-          <TabsTrigger value="calendar" className="gap-2">
-            <Calendar className="w-4 h-4" />
-            <span className="hidden sm:inline">Calendar</span>
-          </TabsTrigger>
-          <TabsTrigger value="account" className="gap-2">
+          <TabsTrigger value="account" className="gap-2 flex-1 min-w-fit">
             <User className="w-4 h-4" />
             <span className="hidden sm:inline">Account</span>
           </TabsTrigger>
@@ -129,6 +135,8 @@ export default async function SettingsPage({
             <ScheduleSettings 
               initialOfficeDays={org.officeDays}
               initialInspectionDays={org.inspectionDays}
+              initialSeasonalMonth={org.seasonalFollowUpMonth}
+              initialSeasonalDay={org.seasonalFollowUpDay}
             />
           )}
 
@@ -143,7 +151,7 @@ export default async function SettingsPage({
                 Appearance
               </CardTitle>
               <CardDescription>
-                Customize how Orbit looks
+                Customize how Relay looks
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -201,17 +209,34 @@ export default async function SettingsPage({
           </Card>
         </TabsContent>
 
+        {/* Integrations (Google) */}
+        <TabsContent value="integrations" className="space-y-6">
+          <Suspense fallback={<div>Loading integrations...</div>}>
+            <GoogleSettings 
+              isConnected={googleStatus?.isConnected || false}
+              hasCalendarAccess={googleStatus?.hasCalendarAccess || false}
+              hasGmailAccess={googleStatus?.hasGmailAccess || false}
+              lastGmailSyncAt={googleStatus?.lastGmailSyncAt || null}
+              authUrl={googleStatus?.authUrl || "#"}
+              userEmail={googleStatus?.userEmail}
+            />
+          </Suspense>
+          
+          {/* Josh Email Intake */}
+          {googleStatus?.hasGmailAccess && (
+            <JoshIntake />
+          )}
+        </TabsContent>
+
+        {/* Carriers Settings */}
+        <TabsContent value="carriers">
+          <CarrierSettings />
+        </TabsContent>
+
         {/* Templates Settings */}
         <TabsContent value="templates">
           <Suspense fallback={<div>Loading templates...</div>}>
             <TemplateSettings templates={templates} />
-          </Suspense>
-        </TabsContent>
-
-        {/* Calendar Settings */}
-        <TabsContent value="calendar">
-          <Suspense fallback={<div>Loading calendar settings...</div>}>
-            <CalendarSettings isGoogleConnected={isGoogleConnected} />
           </Suspense>
         </TabsContent>
 
@@ -259,12 +284,12 @@ export default async function SettingsPage({
                 Mobile App
               </CardTitle>
               <CardDescription>
-                Add Orbit to your home screen
+                Add Relay to your home screen
               </CardDescription>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">
-                Orbit works as a Progressive Web App. On iOS, tap the Share button and select 
+                Relay works as a Progressive Web App. On iOS, tap the Share button and select 
                 &quot;Add to Home Screen&quot;. On Android, tap the menu and select &quot;Install App&quot;.
               </p>
               <Badge variant="secondary">Works Offline</Badge>

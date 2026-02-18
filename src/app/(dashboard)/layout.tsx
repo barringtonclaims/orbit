@@ -2,7 +2,11 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/layout/sidebar";
 import { FloatingActionButton } from "@/components/layout/floating-action-button";
+import { JoshChatBubble } from "@/components/josh/josh-chat-bubble";
 import prisma from "@/lib/prisma";
+
+// Force dynamic to prevent caching issues with organization switching
+export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({
   children,
@@ -20,6 +24,13 @@ export default async function DashboardLayout({
   // Ensure user exists in database
   let dbUser = await prisma.user.findUnique({
     where: { id: user.id },
+    select: {
+      id: true,
+      email: true,
+      fullName: true,
+      avatarUrl: true,
+      activeOrganizationId: true,
+    },
   });
 
   if (!dbUser) {
@@ -30,22 +41,54 @@ export default async function DashboardLayout({
         fullName: user.user_metadata?.full_name || user.email!.split("@")[0],
         avatarUrl: user.user_metadata?.avatar_url || null,
       },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        activeOrganizationId: true,
+      },
     });
   }
 
-  // Get organization membership
-  const membership = await prisma.organizationMember.findFirst({
-    where: { userId: user.id },
-    include: {
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
+  // Get organization membership - RESPECT activeOrganizationId
+  let membership;
+  
+  // First try to get the active organization
+  if (dbUser.activeOrganizationId) {
+    membership = await prisma.organizationMember.findFirst({
+      where: { 
+        userId: user.id,
+        organizationId: dbUser.activeOrganizationId,
+      },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
         },
       },
-    },
-  });
+    });
+  }
+  
+  // Fall back to first organization if active one not found
+  if (!membership) {
+    membership = await prisma.organizationMember.findFirst({
+      where: { userId: user.id },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: "asc" },
+    });
+  }
 
   const userData = {
     id: user.id,
@@ -75,6 +118,9 @@ export default async function DashboardLayout({
 
       {/* Mobile FAB */}
       <FloatingActionButton />
+
+      {/* Josh AI Chat Bubble */}
+      <JoshChatBubble />
     </div>
   );
 }

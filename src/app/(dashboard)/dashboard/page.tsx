@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getDashboardStats, getRecentTasks } from "@/lib/actions/dashboard";
+import { getJoshActivitySummary } from "@/lib/actions/josh";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,8 +14,16 @@ import {
   Plus,
   ArrowRight,
   TrendingUp,
-  Calendar
+  Calendar,
+  Bot,
+  Mail,
+  UserPlus,
+  Link2,
+  Sparkles
 } from "lucide-react";
+
+// Disable static caching - always fetch fresh data
+export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Dashboard",
@@ -26,9 +35,10 @@ export default async function DashboardPage() {
   
   const firstName = user?.user_metadata?.full_name?.split(" ")[0] || "there";
 
-  const [{ data: stats }, { data: recentTasks }] = await Promise.all([
+  const [{ data: stats }, { data: recentTasks }, { data: joshActivity }] = await Promise.all([
     getDashboardStats(),
     getRecentTasks(),
+    getJoshActivitySummary(),
   ]);
 
   const dashboardStats = stats || {
@@ -87,6 +97,76 @@ export default async function DashboardPage() {
           warning={dashboardStats.overdueTasks > 0}
         />
       </div>
+
+      {/* Josh Activity Summary */}
+      {joshActivity && (joshActivity.recentActivities.length > 0 || joshActivity.totalLeadsCreated > 0) && (
+        <Card className="border-blue-500/20 bg-gradient-to-r from-blue-500/5 to-purple-500/5">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white">
+                <Bot className="w-5 h-5" />
+              </div>
+              <div>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  Josh&apos;s Update
+                  <Sparkles className="w-4 h-4 text-purple-500" />
+                </CardTitle>
+                <CardDescription>Your AI assistant has been busy</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <div className="text-center p-3 rounded-lg bg-green-500/10">
+                <UserPlus className="w-5 h-5 mx-auto text-green-600 mb-1" />
+                <p className="text-2xl font-bold text-green-600">{joshActivity.totalLeadsCreated}</p>
+                <p className="text-xs text-muted-foreground">Leads Created</p>
+              </div>
+              <div className="text-center p-3 rounded-lg bg-blue-500/10">
+                <Link2 className="w-5 h-5 mx-auto text-blue-600 mb-1" />
+                <p className="text-2xl font-bold text-blue-600">{joshActivity.emailsLinked}</p>
+                <p className="text-xs text-muted-foreground">Emails Linked</p>
+              </div>
+              <div className="text-center p-3 rounded-lg bg-orange-500/10">
+                <Mail className="w-5 h-5 mx-auto text-orange-600 mb-1" />
+                <p className="text-2xl font-bold text-orange-600">{joshActivity.carrierEmails}</p>
+                <p className="text-xs text-muted-foreground">Carrier Emails</p>
+              </div>
+            </div>
+            {joshActivity.recentActivities.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Recent Activity</p>
+                {joshActivity.recentActivities.slice(0, 3).map((activity) => (
+                  <div key={activity.id} className="flex items-start gap-2 text-sm p-2 rounded-lg bg-muted/50">
+                    <JoshActivityIcon type={activity.activityType} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{activity.title}</p>
+                      {activity.description && (
+                        <p className="text-xs text-muted-foreground truncate">{activity.description}</p>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {format(new Date(activity.createdAt), "h:mm a")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {!joshActivity.gmailConnected && (
+              <div className="mt-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                <p className="text-sm text-yellow-700 dark:text-yellow-400">
+                  Connect your Gmail to let Josh automatically process your emails.
+                </p>
+                <Link href="/settings?tab=josh">
+                  <Button size="sm" variant="outline" className="mt-2">
+                    Connect Gmail
+                  </Button>
+                </Link>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Quick Actions & Today's Tasks */}
       <div className="grid lg:grid-cols-2 gap-6">
@@ -174,7 +254,7 @@ export default async function DashboardPage() {
       {dashboardStats.totalContacts === 0 && (
         <Card className="border-primary/20 bg-primary/5">
           <CardHeader>
-            <CardTitle className="text-lg">Getting Started with Orbit</CardTitle>
+            <CardTitle className="text-lg">Getting Started with Relay</CardTitle>
             <CardDescription>
               Follow these steps to set up your workflow
             </CardDescription>
@@ -301,4 +381,18 @@ function GettingStartedStep({
       {action}
     </div>
   );
+}
+
+function JoshActivityIcon({ type }: { type: string }) {
+  switch (type) {
+    case "LEAD_CREATED":
+    case "LEAD_CREATED_ACCULYNX":
+      return <UserPlus className="w-4 h-4 text-green-500 mt-0.5" />;
+    case "EMAIL_LINKED":
+      return <Link2 className="w-4 h-4 text-blue-500 mt-0.5" />;
+    case "CARRIER_EMAIL_RECEIVED":
+      return <Mail className="w-4 h-4 text-orange-500 mt-0.5" />;
+    default:
+      return <Mail className="w-4 h-4 text-muted-foreground mt-0.5" />;
+  }
 }

@@ -9,7 +9,7 @@ export type {
   Note,
   ContactFile,
   MessageTemplate,
-  GoogleCalendarToken,
+  GoogleToken,
 } from '@prisma/client'
 
 export {
@@ -162,7 +162,7 @@ export const TEMPLATE_CATEGORIES_BY_STAGE: Record<string, string[]> = {
   'Scheduled Inspection': ['APPOINTMENT_REMINDER', 'GENERAL'],
   'Retail Prospect': ['QUOTE', 'QUOTE_FOLLOW_UP'],
   'Claim Prospect': ['CLAIM_RECOMMENDATION', 'CLAIM_REC_FOLLOW_UP', 'PA_AGREEMENT', 'PA_FOLLOW_UP'],
-  'Open Claim': ['CLAIM_FOLLOW_UP'],
+  'Open Claim': ['CLAIM_FOLLOW_UP', 'CARRIER_FOLLOW_UP'],
   'Seasonal Follow Up': ['SEASONAL', 'FIRST_MESSAGE'],
   'Approved Job': ['GENERAL'],
   'Not Interested': ['GENERAL'],

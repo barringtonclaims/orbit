@@ -8,6 +8,9 @@ import { getNextOfficeDay, generateTaskTitle, getActionButtonForTaskType, getSpr
 import { autoSyncAppointmentToCalendar } from "@/lib/actions/calendar";
 import { STAGE_NAMES } from "@/types";
 
+// Type for all action buttons
+type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
+
 export async function scheduleAppointment(input: {
   contactId: string;
   appointmentDate: Date;
@@ -67,7 +70,8 @@ export async function scheduleAppointment(input: {
         appointmentTime: appointmentDateTime,
         status: "PENDING",
         taskType: "APPOINTMENT",
-        actionButton: actionButton as "SEND_FIRST_MESSAGE" | "SCHEDULE_INSPECTION" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "UPLOAD_PA" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | null,
+        actionButton: actionButton as ActionButtonType,
+        currentAction: actionButton as ActionButtonType,
       },
     });
 
@@ -227,7 +231,8 @@ export async function completeAppointment(taskId: string, outcome: {
           dueDate: nextMWF,
           status: "PENDING",
           taskType: taskType,
-          actionButton: actionButton as "SEND_FIRST_MESSAGE" | "SCHEDULE_INSPECTION" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "UPLOAD_PA" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | null,
+          actionButton: actionButton as ActionButtonType,
+        currentAction: actionButton as ActionButtonType,
         },
       });
 

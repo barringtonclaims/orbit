@@ -16,15 +16,6 @@ export async function createOrganization(input: {
   }
 
   try {
-    // Check if user already has an organization
-    const existingMembership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
-    });
-
-    if (existingMembership) {
-      return { error: "You are already a member of an organization" };
-    }
-
     // Generate a unique slug
     const baseSlug = input.name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
     let slug = baseSlug;
@@ -55,6 +46,10 @@ export async function createOrganization(input: {
     // Create default lead stages for the organization
     await createDefaultStages(organization.id);
 
+    // Seed default carriers
+    const { seedDefaultCarriers } = await import("@/lib/actions/carriers");
+    await seedDefaultCarriers(organization.id).catch(() => {});
+
     revalidatePath("/team");
     revalidatePath("/dashboard");
 
@@ -74,12 +69,36 @@ export async function getOrganization() {
   }
 
   try {
-    const membership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
-      include: {
-        organization: true,
-      },
+    // Get user's active organization preference
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
     });
+
+    // If user has an active org set, try to get that one
+    let membership;
+    if (dbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { 
+          userId: user.id,
+          organizationId: dbUser.activeOrganizationId,
+        },
+        include: {
+          organization: true,
+        },
+      });
+    }
+
+    // Fall back to first organization if active one not found
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        include: {
+          organization: true,
+        },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
 
     if (!membership) {
       return { data: null };
@@ -94,6 +113,97 @@ export async function getOrganization() {
   } catch (error) {
     console.error("Error fetching organization:", error);
     return { error: "Failed to fetch organization", data: null };
+  }
+}
+
+/**
+ * Get all organizations a user belongs to
+ */
+export async function getUserOrganizations() {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized", data: [] };
+  }
+
+  try {
+    const memberships = await prisma.organizationMember.findMany({
+      where: { userId: user.id },
+      include: {
+        organization: true,
+      },
+      orderBy: { joinedAt: "asc" },
+    });
+
+    // Get user's active organization
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
+    });
+
+    return {
+      data: memberships.map(m => ({
+        ...m.organization,
+        role: m.role,
+        isActive: m.organizationId === dbUser?.activeOrganizationId || 
+                  (!dbUser?.activeOrganizationId && memberships[0]?.organizationId === m.organizationId),
+      })),
+    };
+  } catch (error) {
+    console.error("Error fetching user organizations:", error);
+    return { error: "Failed to fetch organizations", data: [] };
+  }
+}
+
+/**
+ * Switch to a different organization
+ */
+export async function switchOrganization(organizationId: string) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  
+  if (authError || !user) {
+    return { error: "Unauthorized" };
+  }
+
+  try {
+    // Verify user is a member of this organization
+    const membership = await prisma.organizationMember.findFirst({
+      where: { 
+        userId: user.id,
+        organizationId,
+      },
+      include: { organization: true },
+    });
+
+    if (!membership) {
+      return { error: "You are not a member of this organization" };
+    }
+
+    // Update user's active organization
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { activeOrganizationId: organizationId },
+    });
+
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/contacts");
+    revalidatePath("/tasks");
+    revalidatePath("/calendar");
+    revalidatePath("/settings");
+    revalidatePath("/team");
+
+    return { 
+      data: {
+        ...membership.organization,
+        role: membership.role,
+      },
+    };
+  } catch (error) {
+    console.error("Error switching organization:", error);
+    return { error: "Failed to switch organization" };
   }
 }
 
@@ -370,6 +480,8 @@ export async function assignContact(contactId: string, userId: string | null) {
 export async function updateOrganizationSettings(input: {
   officeDays?: number[];
   inspectionDays?: number[];
+  seasonalFollowUpMonth?: number;
+  seasonalFollowUpDay?: number;
 }) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -387,12 +499,15 @@ export async function updateOrganizationSettings(input: {
       return { error: "You don't have permission to update settings" };
     }
 
+    const updateData: Record<string, unknown> = {};
+    if (input.officeDays !== undefined) updateData.officeDays = input.officeDays;
+    if (input.inspectionDays !== undefined) updateData.inspectionDays = input.inspectionDays;
+    if (input.seasonalFollowUpMonth !== undefined) updateData.seasonalFollowUpMonth = input.seasonalFollowUpMonth;
+    if (input.seasonalFollowUpDay !== undefined) updateData.seasonalFollowUpDay = input.seasonalFollowUpDay;
+
     const org = await prisma.organization.update({
       where: { id: membership.organizationId },
-      data: {
-        officeDays: input.officeDays,
-        inspectionDays: input.inspectionDays,
-      },
+      data: updateData,
     });
 
     revalidatePath("/settings");

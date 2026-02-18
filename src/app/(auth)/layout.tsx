@@ -20,7 +20,7 @@ export default function AuthLayout({
           <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
             <div className="w-3 h-3 rounded-full bg-primary-foreground" />
           </div>
-          <span className="text-xl font-bold">Orbit</span>
+          <span className="text-xl font-bold">Relay</span>
         </Link>
       </header>
 

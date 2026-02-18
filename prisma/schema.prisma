@@ -14,12 +14,13 @@ datasource db {
 // ============================================
 
 model User {
-  id            String    @id @default(uuid())
-  email         String    @unique
-  fullName      String
-  avatarUrl     String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                    String    @id @default(uuid())
+  email                 String    @unique
+  fullName              String
+  avatarUrl             String?
+  activeOrganizationId  String?   // Currently selected organization
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   // Relations
   memberships      OrganizationMember[]
@@ -27,7 +28,8 @@ model User {
   createdContacts  Contact[] @relation("CreatedBy")
   tasks            Task[]
   notes            Note[]
-  calendarTokens   GoogleCalendarToken[]
+  joshMessages     JoshMessage[]
+  connectedGoogleTokens GoogleToken[]  // Google accounts this user has connected
 
   @@map("users")
 }
@@ -39,6 +41,11 @@ model Organization {
   logoUrl        String?
   officeDays     Int[]     @default([1, 3, 5]) // 1=Mon, 3=Wed, 5=Fri
   inspectionDays Int[]     @default([2, 4])    // 2=Tue, 4=Thu
+  
+  // Seasonal follow-up settings
+  seasonalFollowUpMonth Int?      @default(4)   // Month number (1-12), default April
+  seasonalFollowUpDay   Int?      @default(1)   // Day of month (1-31), default 1st
+  
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -47,6 +54,8 @@ model Organization {
   contacts         Contact[]
   leadStages       LeadStage[]
   messageTemplates MessageTemplate[]
+  carriers         Carrier[]
+  googleToken      GoogleToken?
 
   @@map("organizations")
 }
@@ -99,7 +108,9 @@ model Contact {
   quoteType      String?   // e.g., "Full Roof Replacement", "Repair", "Gutters"
   
   // Claim Prospect Fields (populated when contact becomes claim prospect)
-  carrier        String?   // Insurance carrier name
+  carrier        String?   // Insurance carrier name (legacy free-text)
+  carrierId      String?   // FK to Carrier model
+  adjusterEmail  String?   // Per-adjuster email (for PER_ADJUSTER carriers)
   dateOfLoss     DateTime? // Date of the damage/loss event
   policyNumber   String?   // Insurance policy number (manual entry)
   claimNumber    String?   // Insurance claim number (manual entry)
@@ -129,6 +140,7 @@ model Contact {
   assignedTo     User?        @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
   createdBy      User         @relation("CreatedBy", fields: [createdById], references: [id])
   stage          LeadStage?   @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  carrierRef     Carrier?     @relation(fields: [carrierId], references: [id], onDelete: SetNull)
   tasks          Task[]
   timeline       Note[]
   files          ContactFile[]
@@ -146,6 +158,36 @@ enum JobStatus {
   SCHEDULED
   IN_PROGRESS
   COMPLETED
+}
+
+// ============================================
+// CARRIER MODEL
+// ============================================
+
+model Carrier {
+  id                    String           @id @default(uuid())
+  organizationId        String
+  name                  String            // "State Farm", "Allstate", etc.
+  emailType             CarrierEmailType  // UNIFIED or PER_ADJUSTER
+  unifiedEmail          String?           // e.g., "statefarmfireclaims@statefarm.com"
+  requiresClaimInSubject Boolean          @default(true)
+  subjectFormat         String?           // e.g., "Claim #{{claimNumber}} - {{customerName}}"
+  notes                 String?
+  
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts              Contact[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("carriers")
+}
+
+enum CarrierEmailType {
+  UNIFIED        // One email for all claims (claim # in subject)
+  PER_ADJUSTER   // Unique email per adjuster (prompt user each time)
 }
 
 model LeadStage {
@@ -198,6 +240,10 @@ model Task {
   status      TaskStatus   @default(PENDING)
   taskType    TaskType     @default(FOLLOW_UP)
   actionButton ActionButton? // Which action button to show for this task
+  currentAction ActionButton? // The current dynamic action button (changes based on progress)
+  
+  // Quick notes for the user
+  quickNotes  String?
   
   // For appointments
   appointmentTime DateTime?
@@ -228,9 +274,10 @@ enum TaskType {
   // Initial workflow
   FIRST_MESSAGE              // New lead - send first message
   FIRST_MESSAGE_FOLLOW_UP    // Follow up if no response to first message
-  SET_APPOINTMENT            // Schedule initial inspection
+  SET_APPOINTMENT            // Schedule initial inspection (task title, action changes)
   APPOINTMENT                // Scheduled inspection (also calendar event)
   APPOINTMENT_REMINDER       // Send appointment reminder before inspection
+  DISCUSS_INSPECTION         // Discuss inspection results (day after inspection)
   ASSIGN_STATUS              // Post-inspection - assign retail or claim
   
   // Retail workflow
@@ -245,6 +292,9 @@ enum TaskType {
   PA_FOLLOW_UP               // Follow up on PA agreement
   CLAIM_FOLLOW_UP            // Ongoing claim follow-up (after PA signed)
   
+  // Seasonal
+  SEASONAL_FOLLOW_UP         // Contact customer on seasonal date
+  
   // General
   FOLLOW_UP                  // Generic follow-up
   CUSTOM                     // Custom user-created task
@@ -252,23 +302,39 @@ enum TaskType {
 
 // Action buttons that appear on tasks based on context
 enum ActionButton {
+  // Initial workflow actions
   SEND_FIRST_MESSAGE         // Opens template selector for first message SMS
   SEND_FIRST_MESSAGE_FOLLOW_UP // Opens template for first message follow-up
   SCHEDULE_INSPECTION        // Opens calendar to schedule inspection
   SEND_APPOINTMENT_REMINDER  // Opens template for appointment reminder
   ASSIGN_STATUS              // Opens modal to select retail/claim + notes
+  
+  // Retail workflow actions
   SEND_QUOTE                 // Opens template selector for quote email
   SEND_QUOTE_FOLLOW_UP       // Opens template for quote follow-up
+  
+  // Claim workflow actions
   SEND_CLAIM_REC             // Opens template for claim recommendation
   SEND_CLAIM_REC_FOLLOW_UP   // Opens template for claim rec follow-up
   SEND_PA_AGREEMENT          // Opens template for PA agreement
   SEND_PA_FOLLOW_UP          // Opens template for PA follow-up
   SEND_CLAIM_FOLLOW_UP       // Opens template for open claim follow-up
   UPLOAD_PA                  // Opens file upload for signed PA
+  
+  // Seasonal workflow actions
+  SEND_SEASONAL_MESSAGE      // Opens template for seasonal follow-up
+  
+  // Carrier follow-up actions
+  SEND_CARRIER_FOLLOW_UP     // Opens carrier follow-up composer
+  
+  // Job status actions
   MARK_RESPONDED             // Mark that customer responded
   MARK_JOB_SCHEDULED         // Mark job as scheduled
   MARK_JOB_IN_PROGRESS       // Mark job as in progress
   MARK_JOB_COMPLETE          // Mark job as complete
+  
+  // Josh AI actions
+  JOSH_DRAFT_MESSAGE         // Let Josh AI draft a contextual message
 }
 
 // ============================================
@@ -296,6 +362,7 @@ model Note {
 enum NoteType {
   NOTE
   EMAIL_SENT
+  EMAIL_RECEIVED      // Email received and linked by Josh
   SMS_SENT
   STAGE_CHANGE
   TASK_COMPLETED
@@ -307,6 +374,7 @@ enum NoteType {
   CLAIM_REC_SENT
   JOB_STATUS_CHANGE
   SYSTEM
+  JOSH_CREATED        // Contact created by Josh AI
 }
 
 // ============================================
@@ -383,32 +451,157 @@ enum TemplateCategory {
   PA_AGREEMENT            // PA agreement email
   PA_FOLLOW_UP            // PA agreement follow-up
   CLAIM_FOLLOW_UP         // Ongoing claim follow-up
+  CARRIER_FOLLOW_UP       // Follow-up email to insurance carrier
   SEASONAL                // Seasonal follow-up message
   GENERAL                 // General purpose template
 }
 
 // ============================================
-// GOOGLE CALENDAR INTEGRATION
+// GOOGLE INTEGRATION (Unified Calendar + Gmail)
 // ============================================
 
-model GoogleCalendarToken {
-  id           String   @id @default(uuid())
-  userId       String
+model GoogleToken {
+  id             String   @id @default(uuid())
+  organizationId String   @unique  // One Google account per organization
+  connectedById  String             // User who connected the account
+  gmailEmail     String?            // The connected Gmail address
   
   accessToken  String
   refreshToken String
-  tokenType    String
+  tokenType    String   @default("Bearer")
   expiresAt    DateTime
-  scope        String
+  
+  // Granted scopes (tracks what permissions user has granted)
+  hasCalendarAccess Boolean @default(false)
+  hasGmailAccess    Boolean @default(false)
   
   // Calendar settings
   calendarId   String   @default("primary") // Which calendar to sync to
   
+  // Gmail sync state (for Josh)
+  lastGmailHistoryId String?   // Gmail history ID for incremental sync
+  lastGmailSyncAt    DateTime?
+  
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectedBy  User         @relation(fields: [connectedById], references: [id])
 
-  @@unique([userId])
-  @@map("google_calendar_tokens")
+  @@map("google_tokens")
+}
+
+// ============================================
+// JOSH AI ASSISTANT
+// ============================================
+
+model ProcessedEmail {
+  id             String              @id @default(uuid())
+  organizationId String
+  
+  gmailMessageId String              @unique // Gmail message ID to prevent reprocessing
+  threadId       String?             // Gmail thread ID for grouping
+  fromEmail      String
+  fromName       String?
+  subject        String?
+  snippet        String?             // Email preview text
+  receivedAt     DateTime
+  
+  // Processing results
+  status         EmailProcessStatus  @default(PENDING)
+  classification EmailClassification?
+  contactId      String?             // Linked contact if matched/created
+  confidence     Float?              // AI classification confidence
+  
+  // Raw data for debugging
+  rawHeaders     Json?
+  
+  createdAt      DateTime            @default(now())
+  processedAt    DateTime?
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([contactId])
+  @@map("processed_emails")
+}
+
+enum EmailProcessStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+enum EmailClassification {
+  ACCULYNX_NEW_LEAD    // AccuLynx new lead notification
+  CARRIER_EMAIL        // Email from insurance carrier
+  CUSTOMER_EMAIL       // Email from existing customer
+  NEW_CUSTOMER_EMAIL   // Email from potential new customer
+  INTERNAL             // Internal/team email
+  SPAM_MARKETING       // Marketing/spam to ignore
+  UNKNOWN              // Needs manual review
+}
+
+model JoshActivity {
+  id             String           @id @default(uuid())
+  organizationId String
+  userId         String?          // User this activity is for (null = org-wide)
+  
+  activityType   JoshActivityType
+  title          String           // Human-readable title
+  description    String?          // Detailed description
+  
+  // Related entities
+  contactId      String?          // Related contact if applicable
+  emailId        String?          // Related processed email
+  
+  // For notifications
+  isRead         Boolean          @default(false)
+  
+  metadata       Json?            // Additional context data
+  
+  createdAt      DateTime         @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("josh_activities")
+}
+
+enum JoshActivityType {
+  LEAD_CREATED           // Created a new lead from email
+  LEAD_CREATED_ACCULYNX  // Created lead from AccuLynx notification
+  EMAIL_LINKED           // Linked email to existing contact
+  EMAIL_FLAGGED          // Flagged email for manual review
+  CARRIER_EMAIL_RECEIVED // Received email from carrier
+  SYNC_COMPLETED         // Completed email sync
+  SYNC_ERROR             // Error during sync
+}
+
+model JoshMessage {
+  id             String          @id @default(uuid())
+  organizationId String
+  userId         String
+  
+  role           JoshMessageRole // user or assistant
+  content        String
+  
+  // For assistant messages that reference activities
+  activityIds    String[]        // Related JoshActivity IDs
+  
+  createdAt      DateTime        @default(now())
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("josh_messages")
+}
+
+enum JoshMessageRole {
+  USER
+  ASSISTANT
 }

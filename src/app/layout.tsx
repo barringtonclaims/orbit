@@ -19,17 +19,17 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Orbit - Contact & Task Management",
-    template: "%s | Orbit",
+    default: "Relay - Smart CRM for Contractors",
+    template: "%s | Relay",
   },
-  description: "Streamline your sales workflow with intelligent contact management and automated follow-ups.",
-  keywords: ["CRM", "sales", "contacts", "tasks", "leads", "follow-up"],
+  description: "Keep every customer moving through your pipeline -- from first contact to final invoice. AI-powered follow-ups, carrier management, and smart scheduling.",
+  keywords: ["CRM", "contractor", "roofing", "leads", "pipeline", "follow-up", "claims", "scheduling"],
   authors: [{ name: "Barrington Dynamics" }],
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Orbit",
+    title: "Relay",
   },
   icons: {
     icon: [

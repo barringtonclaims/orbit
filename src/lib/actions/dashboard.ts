@@ -13,11 +13,34 @@ export async function getDashboardStats() {
   }
 
   try {
-    const membership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
+    // Get active organization
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
     });
 
-    const orgId = membership?.organizationId || user.id;
+    let membership;
+    if (dbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { 
+          userId: user.id,
+          organizationId: dbUser.activeOrganizationId,
+        },
+      });
+    }
+
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
+
+    if (!membership) {
+      return { data: null };
+    }
+
+    const orgId = membership.organizationId;
     const now = new Date();
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
@@ -37,6 +60,7 @@ export async function getDashboardStats() {
       prisma.task.count({
         where: {
           userId: user.id,
+          contact: { organizationId: orgId },
           status: { in: ["PENDING", "IN_PROGRESS"] },
           dueDate: { gte: todayStart, lte: todayEnd },
         },
@@ -44,6 +68,7 @@ export async function getDashboardStats() {
       prisma.task.count({
         where: {
           userId: user.id,
+          contact: { organizationId: orgId },
           status: { in: ["PENDING", "IN_PROGRESS"] },
           dueDate: { lt: todayStart },
         },
@@ -73,6 +98,33 @@ export async function getRecentTasks() {
   }
 
   try {
+    // Get active organization
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
+    });
+
+    let membership;
+    if (dbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { 
+          userId: user.id,
+          organizationId: dbUser.activeOrganizationId,
+        },
+      });
+    }
+
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
+
+    if (!membership) {
+      return { data: [] };
+    }
+
     const now = new Date();
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
@@ -80,6 +132,7 @@ export async function getRecentTasks() {
     const tasks = await prisma.task.findMany({
       where: {
         userId: user.id,
+        contact: { organizationId: membership.organizationId },
         status: { in: ["PENDING", "IN_PROGRESS"] },
         dueDate: { gte: todayStart, lte: todayEnd },
       },
