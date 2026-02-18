@@ -441,9 +441,9 @@ export function TaskList({
                   </div>
                 </div>
 
-                {/* Action button with Josh AI */}
+                {/* Action button with Josh AI - always visible, compact on mobile */}
                 {!isCompleted && showAction && (
-                  <div className="hidden sm:flex items-center gap-2">
+                  <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                     <TaskActionButton
                       actionButton={task.actionButton}
                       currentAction={task.currentAction}
@@ -457,7 +457,7 @@ export function TaskList({
                 )}
                 
                 {!isCompleted && !showAction && (
-                  <div className="hidden sm:flex">
+                  <div className="flex shrink-0">
                     <JoshAIButton
                       contact={task.contact}
                       messageType="general_follow_up"
@@ -467,7 +467,7 @@ export function TaskList({
                   </div>
                 )}
 
-                {/* Due date */}
+                {/* Due date - icon only on mobile */}
                 <span className={cn(
                   "text-sm flex items-center gap-1 shrink-0",
                   status === "overdue" ? "text-destructive" : 
@@ -528,11 +528,11 @@ export function TaskList({
                   </DropdownMenu>
                 )}
 
-                {/* Notes toggle */}
+                {/* Notes toggle - hidden on mobile to save space */}
                 <Button
                   variant="ghost"
                   size="icon"
-                  className={cn("h-8 w-8 shrink-0", task.quickNotes && "text-amber-500")}
+                  className={cn("hidden sm:flex h-8 w-8 shrink-0", task.quickNotes && "text-amber-500")}
                   onClick={() => toggleNotes(task.id, task.quickNotes)}
                   title={task.quickNotes ? "View notes" : "Add notes"}
                 >
