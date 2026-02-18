@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
 import { STAGE_NAMES } from "@/types";
 
-const CORRECT_STAGE_NAMES = new Set(Object.values(STAGE_NAMES));
+const CORRECT_STAGE_NAMES = new Set<string>(Object.values(STAGE_NAMES));
 
 const OLD_TO_NEW: Record<string, string> = {
   "First Contact": STAGE_NAMES.NEW_LEAD,
