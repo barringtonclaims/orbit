@@ -186,6 +186,7 @@ export default async function ContactDetailPage({
               dateOfLoss: contact.dateOfLoss,
               policyNumber: contact.policyNumber,
               claimNumber: contact.claimNumber,
+              adjusterEmail: contact.adjusterEmail,
               quoteType: contact.quoteType,
               jobStatus: contact.jobStatus,
               // Workflow state tracking

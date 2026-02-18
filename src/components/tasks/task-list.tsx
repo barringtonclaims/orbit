@@ -716,7 +716,7 @@ export function TaskList({
             </Button>
             <Button
               onClick={handleConfirmProgress}
-              disabled={isSubmitting || (!nextStatus && taskNameMode === "auto" && !nextTaskType && !(taskNameMode === "custom" && customTaskName.trim()))}
+              disabled={isSubmitting || (!nextStatus && !nextTaskType && !(taskNameMode === "custom" && customTaskName.trim()))}
             >
               {isSubmitting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />

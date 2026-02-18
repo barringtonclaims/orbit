@@ -83,6 +83,7 @@ interface WorkflowActionsProps {
     dateOfLoss: Date | null;
     policyNumber: string | null;
     claimNumber: string | null;
+    adjusterEmail: string | null;
     quoteType: string | null;
     jobStatus: string | null;
     // Workflow state tracking

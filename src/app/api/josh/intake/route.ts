@@ -350,7 +350,7 @@ async function processIntake(
                 contactId: contact.id,
                 userId,
                 content: noteContent,
-                noteType: isNewLeadNotification(email) ? "SYSTEM" : "EMAIL",
+                noteType: isNewLeadNotification(email) ? "SYSTEM" : "EMAIL_RECEIVED",
                 metadata: {
                   emailId: email.id,
                   source: "intake",

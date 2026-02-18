@@ -228,7 +228,7 @@ export async function updateContactStage(contactId: string, stageId: string) {
           title: taskTitle,
           dueDate: dueDate(),
           status: "PENDING",
-          taskType: taskType,
+          taskType: taskType as "FIRST_MESSAGE" | "FIRST_MESSAGE_FOLLOW_UP" | "SET_APPOINTMENT" | "DISCUSS_INSPECTION" | "SEND_QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "SEASONAL_FOLLOW_UP" | "FOLLOW_UP" | "CUSTOM",
           actionButton: actionButton as ActionButtonType,
           currentAction: actionButton as ActionButtonType,
         },

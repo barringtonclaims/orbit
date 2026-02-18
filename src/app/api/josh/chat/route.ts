@@ -157,9 +157,9 @@ async function getJoshContext(userId: string, organizationId: string): Promise<s
     _count: true,
   });
 
-  // Check Gmail connection (via unified Google token)
+  // Check Gmail connection (via unified Google token - per organization)
   const googleToken = await prisma.googleToken.findUnique({
-    where: { userId },
+    where: { organizationId },
     select: { hasGmailAccess: true },
   });
   const gmailConnected = googleToken?.hasGmailAccess;
