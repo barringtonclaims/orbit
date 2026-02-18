@@ -16,7 +16,7 @@ export async function GET(_request: NextRequest) {
     const drafts = await prisma.joshDraft.findMany({
       where: {
         userId: user.id,
-        status: "pending",
+        status: { in: ["pending", "queued", "composing"] },
       },
       include: {
         contact: {

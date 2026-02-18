@@ -30,7 +30,8 @@ model User {
   notes            Note[]
   joshMessages     JoshMessage[]
   joshDrafts       JoshDraft[]
-  connectedGoogleTokens GoogleToken[]  // Google accounts this user has connected
+  connectedGoogleTokens GoogleToken[]
+  createdFences    Fence[] @relation("FenceCreatedBy")
 
   @@map("users")
 }
@@ -57,6 +58,7 @@ model Organization {
   messageTemplates MessageTemplate[]
   carriers         Carrier[]
   googleToken      GoogleToken?
+  fences           Fence[]
 
   @@map("organizations")
 }
@@ -100,6 +102,8 @@ model Contact {
   city           String?
   state          String?
   zipCode        String?
+  latitude       Float?
+  longitude      Float?
 
   // Lead Status
   stageId        String?
@@ -637,4 +641,26 @@ model JoshDraft {
   @@index([userId, status])
   @@index([contactId])
   @@map("josh_drafts")
+}
+
+// ============================================
+// FENCE / TERRITORY MODELS
+// ============================================
+
+model Fence {
+  id             String   @id @default(uuid())
+  organizationId String
+  createdById    String
+  name           String
+  description    String?
+  coordinates    Json
+  color          String   @default("#3b82f6")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User         @relation("FenceCreatedBy", fields: [createdById], references: [id])
+
+  @@index([organizationId])
+  @@map("fences")
 }

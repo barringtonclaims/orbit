@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
   SheetContent,
@@ -26,6 +25,7 @@ import {
   User,
   Building2,
   Loader2,
+  Zap,
 } from "lucide-react";
 
 interface Draft {
@@ -67,37 +67,62 @@ export function JoshOutbox() {
   const [editSubject, setEditSubject] = useState("");
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const processingRef = useRef(false);
+
+  const hasComposing = drafts.some(
+    (d) => d.status === "queued" || d.status === "composing"
+  );
+  const pendingDrafts = drafts.filter((d) => d.status === "pending");
+  const composingDrafts = drafts.filter(
+    (d) => d.status === "queued" || d.status === "composing"
+  );
+  const totalCount = drafts.length;
+
+  const triggerProcessQueue = useCallback(() => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    fetch("/api/josh/process-queue", { method: "POST" })
+      .catch(() => {})
+      .finally(() => {
+        processingRef.current = false;
+      });
+  }, []);
 
   const fetchDrafts = useCallback(async () => {
     try {
       const res = await fetch("/api/josh/drafts");
       if (res.ok) {
         const data = await res.json();
-        setDrafts(data.drafts || []);
+        const fetched: Draft[] = data.drafts || [];
+        setDrafts(fetched);
+
+        const hasQueued = fetched.some((d) => d.status === "queued");
+        if (hasQueued) {
+          triggerProcessQueue();
+        }
       }
     } catch {
       // Silent fail on background poll
     }
-  }, []);
+  }, [triggerProcessQueue]);
 
-  // Poll for new drafts every 5 seconds when the sheet is open,
-  // and on initial mount / sheet open
   useEffect(() => {
     fetchDrafts();
   }, [fetchDrafts]);
 
+  // Poll faster (2s) when composing, normal (5s) when sheet is open, slow (15s) background
   useEffect(() => {
-    if (!isOpen) return;
-    fetchDrafts();
-    const interval = setInterval(fetchDrafts, 5000);
-    return () => clearInterval(interval);
-  }, [isOpen, fetchDrafts]);
-
-  // Also poll in background every 15s to update the badge
-  useEffect(() => {
+    if (hasComposing) {
+      const interval = setInterval(fetchDrafts, 2000);
+      return () => clearInterval(interval);
+    }
+    if (isOpen) {
+      const interval = setInterval(fetchDrafts, 5000);
+      return () => clearInterval(interval);
+    }
     const interval = setInterval(fetchDrafts, 15000);
     return () => clearInterval(interval);
-  }, [fetchDrafts]);
+  }, [isOpen, hasComposing, fetchDrafts]);
 
   const handleEdit = (draft: Draft) => {
     setEditingId(draft.id);
@@ -135,7 +160,7 @@ export function JoshOutbox() {
           toast.error("No phone number on file");
           return;
         }
-        window.open(composeSMSUrl(draft.contact.phone, draft.body), "_blank");
+        window.location.href = composeSMSUrl(draft.contact.phone, draft.body);
       } else if (draft.channel === "email") {
         let recipientEmail: string | null = null;
         let subject = draft.subject || "";
@@ -177,7 +202,7 @@ export function JoshOutbox() {
         if (draft.recipientType === "carrier" && draft.contact.email) {
           emailOptions.cc = draft.contact.email;
         }
-        window.open(composeEmailUrl(recipientEmail, subject, draft.body, emailOptions), "_blank");
+        window.location.href = composeEmailUrl(recipientEmail, subject, draft.body, emailOptions);
       }
 
       await fetch(`/api/josh/drafts/${draft.id}/send`, { method: "POST" });
@@ -203,8 +228,6 @@ export function JoshOutbox() {
     }
   };
 
-  const pendingCount = drafts.length;
-
   return (
     <Sheet open={isOpen} onOpenChange={setIsOpen}>
       <SheetTrigger asChild>
@@ -213,32 +236,38 @@ export function JoshOutbox() {
           size="icon"
           className={cn(
             "fixed bottom-24 right-6 z-50 h-12 w-12 rounded-full shadow-lg",
-            pendingCount > 0 && "bg-amber-500 hover:bg-amber-600 text-white border-amber-500"
+            totalCount > 0 && "bg-amber-500 hover:bg-amber-600 text-white border-amber-500"
           )}
         >
           <Inbox className="w-5 h-5" />
-          {pendingCount > 0 && (
+          {totalCount > 0 && (
             <Badge
               className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-[10px] bg-destructive text-destructive-foreground"
             >
-              {pendingCount}
+              {totalCount}
             </Badge>
           )}
         </Button>
       </SheetTrigger>
 
-      <SheetContent className="w-full sm:max-w-lg flex flex-col">
-        <SheetHeader>
+      <SheetContent className="w-full sm:max-w-lg flex flex-col overflow-hidden">
+        <SheetHeader className="shrink-0">
           <SheetTitle className="flex items-center gap-2">
             <Inbox className="w-5 h-5" />
             Josh Outbox
-            {pendingCount > 0 && (
-              <Badge variant="secondary">{pendingCount} pending</Badge>
+            {pendingDrafts.length > 0 && (
+              <Badge variant="secondary">{pendingDrafts.length} ready</Badge>
+            )}
+            {composingDrafts.length > 0 && (
+              <Badge variant="outline" className="gap-1 text-amber-600 border-amber-400">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {composingDrafts.length} composing
+              </Badge>
             )}
           </SheetTitle>
         </SheetHeader>
 
-        <ScrollArea className="flex-1 -mx-6 px-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4">
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -253,12 +282,49 @@ export function JoshOutbox() {
             </div>
           ) : (
             <div className="space-y-4 py-4">
-              {drafts.map((draft) => (
+              {composingDrafts.length > 0 && (
+                <div className="space-y-3">
+                  {composingDrafts.map((draft) => (
+                    <div
+                      key={draft.id}
+                      className="border border-amber-300/50 bg-amber-50/50 dark:bg-amber-950/20 rounded-lg p-4 space-y-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">
+                            {draft.contact.firstName} {draft.contact.lastName}
+                          </span>
+                          <Badge variant="outline" className="text-xs gap-1 py-0 text-amber-600 border-amber-400">
+                            <Zap className="w-3 h-3" />
+                            Composing
+                          </Badge>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive gap-1 h-7"
+                          onClick={() => handleDiscard(draft.id)}
+                        >
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground italic">
+                        &ldquo;{draft.directive}&rdquo;
+                      </p>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Josh is writing this message...
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {pendingDrafts.map((draft) => (
                 <div
                   key={draft.id}
                   className="border rounded-lg p-4 space-y-3"
                 >
-                  {/* Header: contact name + channel badges */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm">
@@ -287,12 +353,10 @@ export function JoshOutbox() {
                     </Badge>
                   </div>
 
-                  {/* Directive preview */}
                   <p className="text-xs text-muted-foreground italic">
                     &ldquo;{draft.directive}&rdquo;
                   </p>
 
-                  {/* Subject (email) */}
                   {draft.channel !== "sms" && editingId === draft.id && (
                     <input
                       className="w-full text-sm border rounded px-2 py-1"
@@ -307,7 +371,6 @@ export function JoshOutbox() {
                     </p>
                   )}
 
-                  {/* Message body */}
                   {editingId === draft.id ? (
                     <Textarea
                       value={editBody}
@@ -321,7 +384,6 @@ export function JoshOutbox() {
                     </p>
                   )}
 
-                  {/* Actions */}
                   <div className="flex items-center gap-2">
                     {editingId === draft.id ? (
                       <>
@@ -381,7 +443,7 @@ export function JoshOutbox() {
               ))}
             </div>
           )}
-        </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   );

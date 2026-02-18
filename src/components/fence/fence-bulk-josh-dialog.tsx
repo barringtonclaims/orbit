@@ -14,42 +14,29 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Zap, Send, Eraser } from "lucide-react";
+import type { FenceContactResult } from "@/lib/actions/fences";
 
-interface Task {
-  id: string;
-  title: string;
-  contact: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    stage: {
-      name: string;
-      color: string;
-    } | null;
-  };
-}
-
-interface BulkJoshDialogProps {
+interface FenceBulkJoshDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  tasks: Task[];
+  contacts: FenceContactResult[];
   onComplete?: () => void;
 }
 
-export function BulkJoshDialog({
+export function FenceBulkJoshDialog({
   open,
   onOpenChange,
-  tasks,
+  contacts,
   onComplete,
-}: BulkJoshDialogProps) {
+}: FenceBulkJoshDialogProps) {
   const [directives, setDirectives] = useState<Record<string, string>>({});
 
-  const filledCount = tasks.filter(
-    (t) => directives[t.id]?.trim()
+  const filledCount = contacts.filter(
+    (c) => directives[c.id]?.trim()
   ).length;
 
-  const updateDirective = (taskId: string, value: string) => {
-    setDirectives((prev) => ({ ...prev, [taskId]: value }));
+  const updateDirective = (contactId: string, value: string) => {
+    setDirectives((prev) => ({ ...prev, [contactId]: value }));
   };
 
   const handleClearAll = () => {
@@ -57,12 +44,11 @@ export function BulkJoshDialog({
   };
 
   const handleQueueAll = async () => {
-    const items = tasks
-      .filter((t) => directives[t.id]?.trim())
-      .map((t) => ({
-        contactId: t.contact.id,
-        taskId: t.id,
-        directive: directives[t.id].trim(),
+    const items = contacts
+      .filter((c) => directives[c.id]?.trim())
+      .map((c) => ({
+        contactId: c.id,
+        directive: directives[c.id].trim(),
       }));
 
     if (items.length === 0) {
@@ -106,42 +92,40 @@ export function BulkJoshDialog({
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Zap className="w-5 h-5" />
-            Bulk Directives — {tasks.length} Task{tasks.length !== 1 ? "s" : ""}
+            Bulk Directives — {contacts.length} Contact
+            {contacts.length !== 1 ? "s" : ""}
           </DialogTitle>
           <DialogDescription>
-            Type a directive for each task. Josh will compose messages in the
+            Type a directive for each contact. Josh will compose messages in the
             background and queue them in your outbox.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
           <div className="space-y-3 py-2">
-            {tasks.map((task) => (
-              <div
-                key={task.id}
-                className="border rounded-lg p-3 space-y-2"
-              >
+            {contacts.map((contact) => (
+              <div key={contact.id} className="border rounded-lg p-3 space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-sm">
-                    {task.contact.firstName} {task.contact.lastName}
+                    {contact.firstName} {contact.lastName}
                   </span>
-                  {task.contact.stage && (
+                  {contact.stage && (
                     <Badge
                       variant="outline"
                       className="text-[10px] py-0 px-1.5"
                       style={{
-                        borderColor: task.contact.stage.color,
-                        color: task.contact.stage.color,
+                        borderColor: contact.stage.color,
+                        color: contact.stage.color,
                       }}
                     >
-                      {task.contact.stage.name}
+                      {contact.stage.name}
                     </Badge>
                   )}
                 </div>
                 <Textarea
-                  placeholder={`Tell Josh what to do for ${task.contact.firstName}...`}
-                  value={directives[task.id] || ""}
-                  onChange={(e) => updateDirective(task.id, e.target.value)}
+                  placeholder={`Tell Josh what to do for ${contact.firstName}...`}
+                  value={directives[contact.id] || ""}
+                  onChange={(e) => updateDirective(contact.id, e.target.value)}
                   rows={2}
                   className="resize-none text-sm"
                 />

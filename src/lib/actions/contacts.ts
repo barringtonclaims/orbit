@@ -6,6 +6,7 @@ import prisma from "@/lib/prisma";
 import { generateTaskTitle, getActionButtonForTaskType } from "@/lib/scheduling";
 import { Prisma } from "@prisma/client";
 import { createDefaultStages } from "./stages";
+import { geocodeAddress } from "./geocode";
 
 // Type for all action buttons
 type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
@@ -172,6 +173,20 @@ export async function createContact(input: CreateContactInput) {
         stageOrder: defaultStage?.order || 0,
       },
     });
+
+    // Geocode address in background (don't block contact creation)
+    geocodeAddress(input.address, input.city, input.state, input.zipCode).then(
+      (geo) => {
+        if (geo) {
+          prisma.contact
+            .update({
+              where: { id: contact.id },
+              data: { latitude: geo.lat, longitude: geo.lng },
+            })
+            .catch(() => {});
+        }
+      }
+    );
 
     // Create initial timeline entry
     await prisma.note.create({
@@ -427,6 +442,30 @@ export async function updateContact(id: string, input: UpdateContactInput) {
     }
     if (input.seasonalReminderDate) {
       data.seasonalReminderDate = new Date(input.seasonalReminderDate);
+    }
+
+    // Re-geocode if any address field changed
+    const addressChanged =
+      input.address !== undefined ||
+      input.city !== undefined ||
+      input.state !== undefined ||
+      input.zipCode !== undefined;
+
+    if (addressChanged) {
+      const current = await prisma.contact.findUnique({
+        where: { id },
+        select: { address: true, city: true, state: true, zipCode: true },
+      });
+      const addr = input.address ?? current?.address;
+      const cty = input.city ?? current?.city;
+      const st = input.state ?? current?.state;
+      const zip = input.zipCode ?? current?.zipCode;
+
+      const geo = await geocodeAddress(addr, cty, st, zip);
+      if (geo) {
+        data.latitude = geo.lat;
+        data.longitude = geo.lng;
+      }
     }
 
     const contact = await prisma.contact.update({

@@ -27,6 +27,7 @@ import {
   Building2,
   UserCircle,
   Calendar as CalendarIcon,
+  MapPinned,
 } from "lucide-react";
 import { useState } from "react";
 import { OrganizationSwitcher } from "./organization-switcher";
@@ -50,6 +51,7 @@ const navItems = [
   { href: "/calendar", label: "Calendar", icon: CalendarIcon },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
+  { href: "/fence", label: "Fence", icon: MapPinned },
 ];
 
 const bottomNavItems = [
