@@ -26,6 +26,8 @@ export interface CreateContactInput {
 export interface UpdateContactInput extends Partial<CreateContactInput> {
   // Claim-specific fields
   carrier?: string;
+  carrierId?: string | null;
+  adjusterEmail?: string | null;
   dateOfLoss?: Date | string;
   policyNumber?: string;
   claimNumber?: string;
@@ -393,11 +395,25 @@ export async function updateContact(id: string, input: UpdateContactInput) {
   }
 
   try {
-    // Process date fields
+    const { carrierId, adjusterEmail, ...rest } = input;
     const data: Prisma.ContactUpdateInput = {
-      ...input,
+      ...rest,
       updatedAt: new Date(),
     };
+
+    // Handle carrier relation
+    if (carrierId !== undefined) {
+      if (carrierId) {
+        data.carrierRef = { connect: { id: carrierId } };
+      } else {
+        data.carrierRef = { disconnect: true };
+      }
+      delete (data as Record<string, unknown>).carrierId;
+    }
+
+    if (adjusterEmail !== undefined) {
+      data.adjusterEmail = adjusterEmail;
+    }
 
     // Convert string dates to Date objects
     if (input.dateOfLoss) {
@@ -423,6 +439,7 @@ export async function updateContact(id: string, input: UpdateContactInput) {
 
     revalidatePath("/contacts");
     revalidatePath(`/contacts/${id}`);
+    revalidatePath("/tasks");
 
     return { data: contact };
   } catch (error) {

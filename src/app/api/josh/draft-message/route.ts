@@ -148,6 +148,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Contact not found" }, { status: 404 });
     }
 
+    // Fetch user's display name so the message is signed as them
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { fullName: true },
+    });
+    const userName = dbUser?.fullName || user.email?.split("@")[0] || "the user";
+
     // Build context for the AI
     const contactContext = buildContactContext(contact);
     const typePrompt = MESSAGE_TYPE_PROMPTS[messageType] || MESSAGE_TYPE_PROMPTS.general_follow_up;
@@ -156,6 +163,7 @@ export async function POST(request: NextRequest) {
     const draftMessage = await generateDraftMessage(
       typePrompt,
       contactContext,
+      userName,
       customContext
     );
 
@@ -253,6 +261,7 @@ function buildContactContext(contact: {
 async function generateDraftMessage(
   typePrompt: string,
   contactContext: string,
+  userName: string,
   customContext?: string
 ): Promise<string> {
   if (!XAI_API_KEY) {
@@ -260,23 +269,26 @@ async function generateDraftMessage(
   }
 
   try {
-    const systemPrompt = `You are Josh, an AI assistant for a roofing contractor CRM called Orbit.
-You're helping draft professional messages to customers and leads.
+    const systemPrompt = `You are a ghostwriter for a roofing contractor named ${userName}.
+You write messages in ${userName}'s voice -- friendly, professional, personable.
+All messages must sound like they come directly from ${userName}, NOT from an AI assistant.
 
 Guidelines:
+- Write as ${userName} in first person
 - Be friendly, professional, and genuine
 - Use the contact's first name naturally when appropriate
 - Reference specific details about their situation when relevant
 - Keep the tone warm but businesslike
-- Never mention that you're an AI or that this is an auto-generated message`;
+- Never mention that you're an AI or that this is auto-generated
+- If the message warrants a sign-off, sign as ${userName}`;
 
     const userPrompt = `${typePrompt}
 
 Contact Information:
 ${contactContext}
-${customContext ? `\nAdditional Context from User:\n${customContext}` : ""}
+${customContext ? `\nAdditional Context from ${userName}:\n${customContext}` : ""}
 
-Generate only the message body - no subject line, no signature, just the message content.`;
+Generate only the message body - no subject line, just the message content.`;
 
     const response = await fetch(XAI_API_URL, {
       method: "POST",

@@ -18,6 +18,9 @@ export type TaskWithContact = Prisma.TaskGetPayload<{
         email: true;
         address: true;
         carrier: true;
+        carrierId: true;
+        claimNumber: true;
+        adjusterEmail: true;
         quoteType: true;
         stage: {
           select: {
@@ -26,6 +29,14 @@ export type TaskWithContact = Prisma.TaskGetPayload<{
             color: true;
             stageType: true;
             workflowType: true;
+          };
+        };
+        carrierRef: {
+          select: {
+            id: true;
+            name: true;
+            unifiedEmail: true;
+            emailType: true;
           };
         };
       };
@@ -162,6 +173,9 @@ export async function getTasks(options?: {
             email: true,
             address: true,
             carrier: true,
+            carrierId: true,
+            claimNumber: true,
+            adjusterEmail: true,
             quoteType: true,
             stage: {
               select: {
@@ -170,6 +184,14 @@ export async function getTasks(options?: {
                 color: true,
                 stageType: true,
                 workflowType: true,
+              },
+            },
+            carrierRef: {
+              select: {
+                id: true,
+                name: true,
+                unifiedEmail: true,
+                emailType: true,
               },
             },
           },
@@ -298,11 +320,26 @@ export async function completeTask(taskId: string, options?: {
     });
 
     // Fetch org for scheduling settings
-    const membership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
-      include: { organization: true },
+    const completeDbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
     });
-    const officeDays = membership?.organization.officeDays || [1, 3, 5];
+    let membership;
+    if (completeDbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id, organizationId: completeDbUser.activeOrganizationId },
+        include: { organization: true },
+      });
+    }
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        include: { organization: true },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
+    const rawOfficeDays = membership?.organization?.officeDays;
+    const officeDays = Array.isArray(rawOfficeDays) && rawOfficeDays.length > 0 ? rawOfficeDays : [1, 3, 5];
     const contactName = `${task.contact.firstName} ${task.contact.lastName}`;
 
     // Handle explicit reschedule or next task creation
@@ -503,13 +540,27 @@ export async function rescheduleTaskByOfficeDays(taskId: string, officeDaysToSki
   }
 
   try {
-    // Get user's organization settings for office days
-    const membership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
-      include: { organization: true },
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
     });
+    let membership;
+    if (dbUser?.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id, organizationId: dbUser.activeOrganizationId },
+        include: { organization: true },
+      });
+    }
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        include: { organization: true },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
     
-    const officeDays = membership?.organization?.officeDays || [1, 3, 5]; // Default M/W/F
+    const rawDays = membership?.organization?.officeDays;
+    const officeDays = Array.isArray(rawDays) && rawDays.length > 0 ? rawDays : [1, 3, 5];
     
     // Calculate the new date using office day logic
     const { getNthOfficeDay } = await import("@/lib/scheduling");
@@ -765,7 +816,8 @@ export async function rescheduleTasksBatch(taskIds: string[], officeDaysToSkip: 
         orderBy: { joinedAt: "asc" },
       });
     }
-    const officeDays = membership?.organization?.officeDays || [1, 3, 5];
+    const rawDays = membership?.organization?.officeDays;
+    const officeDays = Array.isArray(rawDays) && rawDays.length > 0 ? rawDays : [1, 3, 5];
 
     const { getNthOfficeDay } = await import("@/lib/scheduling");
     const newDate = getNthOfficeDay(officeDaysToSkip, new Date(), officeDays);

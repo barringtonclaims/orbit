@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { getContact, updateContact } from "@/lib/actions/contacts";
+import { CarrierSelect } from "@/components/contacts/carrier-select";
 import { ArrowLeft, Loader2, User, Mail, Phone, MapPin, FileText, Shield } from "lucide-react";
 
 export default function EditContactPage() {
@@ -32,6 +33,8 @@ export default function EditContactPage() {
     source: "",
     notes: "",
     carrier: "",
+    carrierId: null as string | null,
+    adjusterEmail: null as string | null,
     policyNumber: "",
     claimNumber: "",
   });
@@ -57,6 +60,8 @@ export default function EditContactPage() {
         source: c.source || "",
         notes: c.notes || "",
         carrier: c.carrier || "",
+        carrierId: c.carrierId || null,
+        adjusterEmail: c.adjusterEmail || null,
         policyNumber: c.policyNumber || "",
         claimNumber: c.claimNumber || "",
       });
@@ -91,6 +96,8 @@ export default function EditContactPage() {
         source: formData.source.trim() || undefined,
         notes: formData.notes.trim() || undefined,
         carrier: formData.carrier.trim() || undefined,
+        carrierId: formData.carrierId,
+        adjusterEmail: formData.adjusterEmail,
         policyNumber: formData.policyNumber.trim() || undefined,
         claimNumber: formData.claimNumber.trim() || undefined,
       });
@@ -291,13 +298,18 @@ export default function EditContactPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="carrier">Insurance Carrier</Label>
-              <Input
-                id="carrier"
-                name="carrier"
-                value={formData.carrier}
-                onChange={handleChange}
-                placeholder="e.g., State Farm, Allstate"
+              <Label>Insurance Carrier</Label>
+              <CarrierSelect
+                value={formData.carrierId}
+                adjusterEmail={formData.adjusterEmail}
+                onChange={(carrierId, carrierName, adjusterEmail) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    carrierId,
+                    carrier: carrierName,
+                    adjusterEmail: adjusterEmail ?? null,
+                  }));
+                }}
                 disabled={isLoading}
               />
             </div>

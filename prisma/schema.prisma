@@ -29,6 +29,7 @@ model User {
   tasks            Task[]
   notes            Note[]
   joshMessages     JoshMessage[]
+  joshDrafts       JoshDraft[]
   connectedGoogleTokens GoogleToken[]  // Google accounts this user has connected
 
   @@map("users")
@@ -144,6 +145,7 @@ model Contact {
   tasks          Task[]
   timeline       Note[]
   files          ContactFile[]
+  joshDrafts     JoshDraft[]
 
   @@index([organizationId])
   @@index([assignedToId])
@@ -254,6 +256,7 @@ model Task {
 
   contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
   user        User         @relation(fields: [userId], references: [id])
+  joshDrafts  JoshDraft[]
 
   @@index([contactId])
   @@index([userId])
@@ -604,4 +607,34 @@ model JoshMessage {
 enum JoshMessageRole {
   USER
   ASSISTANT
+}
+
+// ============================================
+// JOSH OUTBOX (Draft messages composed by Josh AI)
+// ============================================
+
+model JoshDraft {
+  id             String   @id @default(uuid())
+  userId         String
+  contactId      String
+  taskId         String?
+
+  channel        String   // "sms", "email", "both"
+  recipientType  String   @default("customer") // "customer", "carrier"
+  subject        String?
+  body           String
+  directive      String   // The original user directive
+
+  status         String   @default("pending") // "pending", "sent", "discarded"
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  task    Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([contactId])
+  @@map("josh_drafts")
 }

@@ -32,20 +32,21 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { completeTask, rescheduleTaskByOfficeDays, updateTaskNotes } from "@/lib/actions/tasks";
+import { updateContact } from "@/lib/actions/contacts";
 import { updateContactStage } from "@/lib/actions/stages";
 import { getLeadStages } from "@/lib/actions/stages";
-import { TaskActionButton, JoshAIButton } from "@/components/tasks/task-action-button";
-import { TemplateSelector } from "@/components/templates/template-selector";
-import { composeSMSUrl, composeEmailUrl } from "@/lib/messaging";
-import { type TemplateContext } from "@/lib/templates";
+import { TaskActionButton } from "@/components/tasks/task-action-button";
+import { CarrierSelect } from "@/components/contacts/carrier-select";
 import { format, isPast, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
   CheckSquare,
   Calendar,
   AlertCircle,
+  AlertTriangle,
   Clock,
   Loader2,
   Phone,
@@ -77,6 +78,9 @@ interface Task {
     email: string | null;
     address: string | null;
     carrier: string | null;
+    carrierId: string | null;
+    claimNumber: string | null;
+    adjusterEmail: string | null;
     quoteType: string | null;
     stage: {
       id: string;
@@ -84,6 +88,12 @@ interface Task {
       color: string;
       stageType: string;
       workflowType: string;
+    } | null;
+    carrierRef: {
+      id: string;
+      name: string;
+      unifiedEmail: string | null;
+      emailType: string;
     } | null;
   };
 }
@@ -96,24 +106,6 @@ interface TaskListProps {
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
 }
-
-const taskTypeToCategory: Record<string, string> = {
-  FIRST_MESSAGE: "FIRST_MESSAGE",
-  QUOTE_FOLLOW_UP: "QUOTE_FOLLOW_UP",
-  CLAIM_RECOMMENDATION: "CLAIM_RECOMMENDATION",
-  CLAIM_REC_FOLLOW_UP: "CLAIM_REC_FOLLOW_UP",
-  PA_AGREEMENT: "PA_AGREEMENT",
-  PA_FOLLOW_UP: "PA_FOLLOW_UP",
-  CLAIM_FOLLOW_UP: "CLAIM_FOLLOW_UP",
-  SEND_QUOTE: "QUOTE",
-};
-
-const autoRescheduleTypes = [
-  "QUOTE_FOLLOW_UP",
-  "CLAIM_REC_FOLLOW_UP",
-  "PA_FOLLOW_UP",
-  "CLAIM_FOLLOW_UP",
-];
 
 export function TaskList({
   tasks,
@@ -128,20 +120,22 @@ export function TaskList({
   const [notesValues, setNotesValues] = useState<Record<string, string>>({});
   const [savingNotes, setSavingNotes] = useState<Set<string>>(new Set());
   const [showProgressDialog, setShowProgressDialog] = useState(false);
-  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [progressingTask, setProgressingTask] = useState<Task | null>(null);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [nextStatus, setNextStatus] = useState("");
   const [nextTaskType, setNextTaskType] = useState("");
   const [customTaskName, setCustomTaskName] = useState("");
   const [taskNameMode, setTaskNameMode] = useState<"auto" | "custom">("auto");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [stages, setStages] = useState<{ id: string; name: string; stageType: string; isTerminal: boolean }[]>([]);
-  const [templateConfig, setTemplateConfig] = useState<{
-    category: string;
-    preferredType: "sms" | "email";
-    title: string;
-  } | null>(null);
+
+  // Claim info dialog state
+  const [showClaimDialog, setShowClaimDialog] = useState(false);
+  const [claimTask, setClaimTask] = useState<Task | null>(null);
+  const [claimCarrierId, setClaimCarrierId] = useState<string | null>(null);
+  const [claimCarrierName, setClaimCarrierName] = useState("");
+  const [claimAdjusterEmail, setClaimAdjusterEmail] = useState<string | null>(null);
+  const [claimNumber, setClaimNumber] = useState("");
+  const [isSavingClaim, setIsSavingClaim] = useState(false);
 
   // Status-to-default-task mapping
   const STATUS_TASK_MAP: Record<string, string> = {
@@ -321,32 +315,45 @@ export function TaskList({
     }
   };
 
-  const handleOpenTemplate = (task: Task) => {
-    const category = taskTypeToCategory[task.taskType] || "GENERAL";
-    const preferredType = ["FIRST_MESSAGE", "QUOTE_FOLLOW_UP", "CLAIM_REC_FOLLOW_UP", "PA_FOLLOW_UP", "CLAIM_FOLLOW_UP"].includes(task.taskType) 
-      ? "sms" as const 
-      : "email" as const;
-    
-    setSelectedTask(task);
-    setTemplateConfig({ category, preferredType, title: task.title });
-    setShowTemplateSelector(true);
+  const openClaimInfoDialog = (task: Task) => {
+    setClaimTask(task);
+    setClaimCarrierId(task.contact.carrierId);
+    setClaimCarrierName(task.contact.carrierRef?.name || task.contact.carrier || "");
+    setClaimAdjusterEmail(task.contact.adjusterEmail);
+    setClaimNumber(task.contact.claimNumber || "");
+    setShowClaimDialog(true);
   };
 
-  const handleTemplateSelect = (message: string, type: "sms" | "email", subject?: string) => {
-    if (!selectedTask) return;
-    const contact = selectedTask.contact;
-    
-    if (type === "sms" && contact.phone) {
-      window.location.href = composeSMSUrl(contact.phone, message);
-    } else if (type === "email" && contact.email) {
-      window.location.href = composeEmailUrl(contact.email, subject || "", message);
-    } else {
-      navigator.clipboard.writeText(message);
-      toast.success("Message copied to clipboard");
+  const handleSaveClaimInfo = async () => {
+    if (!claimTask) return;
+    if (!claimCarrierId) {
+      toast.error("Please select a carrier");
+      return;
     }
-
-    if (autoRescheduleTypes.includes(selectedTask.taskType)) {
-      completeTask(selectedTask.id, { reschedule: true });
+    if (!claimNumber.trim()) {
+      toast.error("Claim number is required");
+      return;
+    }
+    setIsSavingClaim(true);
+    try {
+      const result = await updateContact(claimTask.contact.id, {
+        carrierId: claimCarrierId,
+        carrier: claimCarrierName,
+        adjusterEmail: claimAdjusterEmail,
+        claimNumber: claimNumber.trim(),
+      });
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Claim info saved");
+      setShowClaimDialog(false);
+      setClaimTask(null);
+      router.refresh();
+    } catch {
+      toast.error("Failed to save claim info");
+    } finally {
+      setIsSavingClaim(false);
     }
   };
 
@@ -357,18 +364,6 @@ export function TaskList({
     return "upcoming";
   };
 
-  const hasActionButton = (task: Task) => {
-    const action = task.currentAction || task.actionButton || task.taskType;
-    return action && [
-      "SEND_FIRST_MESSAGE", "FIRST_MESSAGE", "SEND_FIRST_MESSAGE_FOLLOW_UP",
-      "SEND_QUOTE", "SEND_QUOTE_FOLLOW_UP", "QUOTE_FOLLOW_UP",
-      "SEND_CLAIM_REC", "CLAIM_RECOMMENDATION", "SEND_CLAIM_REC_FOLLOW_UP",
-      "CLAIM_REC_FOLLOW_UP", "SEND_CLAIM_FOLLOW_UP", "CLAIM_FOLLOW_UP",
-      "SEND_PA_AGREEMENT", "PA_AGREEMENT", "SEND_PA_FOLLOW_UP", "PA_FOLLOW_UP",
-      "SCHEDULE_INSPECTION", "SET_APPOINTMENT", "ASSIGN_STATUS",
-      "SEND_APPOINTMENT_REMINDER", "SEND_SEASONAL_MESSAGE"
-    ].includes(action);
-  };
 
   if (tasks.length === 0) {
     if (!emptyMessage) return null;
@@ -388,7 +383,6 @@ export function TaskList({
         {tasks.map((task) => {
           const status = getTaskStatus(task);
           const contactName = `${task.contact.firstName} ${task.contact.lastName}`;
-          const showAction = hasActionButton(task);
           const isCompleted = status === "completed";
           const isSelected = selectedIds?.has(task.id) ?? false;
 
@@ -438,31 +432,29 @@ export function TaskList({
                         {task.contact.stage.name}
                       </Badge>
                     )}
+                    {task.contact.stage?.name === "Open Claim" && (!task.contact.carrierId || !task.contact.claimNumber) && (
+                      <button
+                        onClick={(e) => { e.preventDefault(); openClaimInfoDialog(task); }}
+                        className="shrink-0"
+                        title="Missing carrier or claim number"
+                      >
+                        <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-[10px] gap-1 cursor-pointer hover:bg-amber-100">
+                          <AlertTriangle className="w-3 h-3" />
+                          Claim Info
+                        </Badge>
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                {/* Action button with Josh AI - always visible, compact on mobile */}
-                {!isCompleted && showAction && (
-                  <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                {/* Unified action button */}
+                {!isCompleted && (
+                  <div className="flex items-center shrink-0">
                     <TaskActionButton
-                      actionButton={task.actionButton}
-                      currentAction={task.currentAction}
                       contact={task.contact}
                       taskId={task.id}
                       taskType={task.taskType}
-                      showJoshButton={true}
                       onActionComplete={() => router.refresh()}
-                    />
-                  </div>
-                )}
-                
-                {!isCompleted && !showAction && (
-                  <div className="flex shrink-0">
-                    <JoshAIButton
-                      contact={task.contact}
-                      messageType="general_follow_up"
-                      variant="ghost"
-                      size="sm"
                     />
                   </div>
                 )}
@@ -560,29 +552,6 @@ export function TaskList({
           );
         })}
       </div>
-
-      {/* Template Selector */}
-      {templateConfig && selectedTask && (
-        <TemplateSelector
-          open={showTemplateSelector}
-          onOpenChange={setShowTemplateSelector}
-          category={templateConfig.category}
-          context={{
-            contact: {
-              firstName: selectedTask.contact.firstName,
-              lastName: selectedTask.contact.lastName,
-              email: selectedTask.contact.email,
-              phone: selectedTask.contact.phone,
-              address: selectedTask.contact.address,
-              carrier: selectedTask.contact.carrier,
-              quoteType: selectedTask.contact.quoteType,
-            },
-          }}
-          preferredType={templateConfig.preferredType}
-          title={templateConfig.title}
-          onSelect={handleTemplateSelect}
-        />
-      )}
 
       {/* Progress Task Dialog */}
       <Dialog open={showProgressDialog} onOpenChange={setShowProgressDialog}>
@@ -725,6 +694,63 @@ export function TaskList({
                   <ArrowRight className="w-4 h-4 mr-2" />
                   Progress
                 </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Claim Info Dialog */}
+      <Dialog open={showClaimDialog} onOpenChange={setShowClaimDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Add Claim Info
+            </DialogTitle>
+            <DialogDescription>
+              {claimTask?.contact.firstName} {claimTask?.contact.lastName} is missing carrier or claim details needed for carrier communication.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Insurance Carrier *</Label>
+              <CarrierSelect
+                value={claimCarrierId}
+                adjusterEmail={claimAdjusterEmail}
+                onChange={(carrierId, carrierName, adjusterEmail) => {
+                  setClaimCarrierId(carrierId);
+                  setClaimCarrierName(carrierName);
+                  setClaimAdjusterEmail(adjusterEmail ?? null);
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="claim-number">Claim Number *</Label>
+              <Input
+                id="claim-number"
+                placeholder="Enter claim number"
+                value={claimNumber}
+                onChange={(e) => setClaimNumber(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowClaimDialog(false)}
+              disabled={isSavingClaim}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveClaimInfo}
+              disabled={isSavingClaim || !claimCarrierId || !claimNumber.trim()}
+            >
+              {isSavingClaim ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Save"
               )}
             </Button>
           </DialogFooter>

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/layout/sidebar";
 import { FloatingActionButton } from "@/components/layout/floating-action-button";
 import { JoshChatBubble } from "@/components/josh/josh-chat-bubble";
+import { JoshOutbox } from "@/components/josh/josh-outbox";
 import prisma from "@/lib/prisma";
 
 // Force dynamic to prevent caching issues with organization switching
@@ -118,6 +119,9 @@ export default async function DashboardLayout({
 
       {/* Mobile FAB */}
       <FloatingActionButton />
+
+      {/* Josh Outbox */}
+      <JoshOutbox />
 
       {/* Josh AI Chat Bubble */}
       <JoshChatBubble />

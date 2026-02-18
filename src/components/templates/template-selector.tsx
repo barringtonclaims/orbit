@@ -94,7 +94,8 @@ export function TemplateSelector({
   useEffect(() => {
     if (open) {
       setLoading(true);
-      getTemplates({ category }).then(({ data }) => {
+      const fetchOptions = category && category !== "ALL" ? { category } : {};
+      getTemplates(fetchOptions).then(({ data }) => {
         setTemplates(data || []);
         setLoading(false);
         

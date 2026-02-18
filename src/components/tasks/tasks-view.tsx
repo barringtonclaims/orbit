@@ -21,8 +21,9 @@ import { toast } from "sonner";
 import { rescheduleTasksBatch, setTasksDateBatch } from "@/lib/actions/tasks";
 import { updateContactsStagesBatch, getLeadStages } from "@/lib/actions/stages";
 import { TaskList } from "@/components/tasks/task-list";
+import { BulkJoshDialog } from "@/components/tasks/bulk-josh-dialog";
 import { FixMissingTasksButton } from "@/components/tasks/fix-missing-tasks-button";
-import { format } from "date-fns";
+import { format, startOfDay, endOfDay, isPast, isToday } from "date-fns";
 import { 
   Clock, 
   AlertCircle, 
@@ -30,13 +31,13 @@ import {
   ListTodo,
   Snowflake,
   XCircle,
-  CheckCircle2,
   Search,
   Loader2,
   CalendarClock,
   ArrowRight,
   X,
   CalendarDays,
+  Zap,
 } from "lucide-react";
 
 interface Task {
@@ -59,6 +60,9 @@ interface Task {
     email: string | null;
     address: string | null;
     carrier: string | null;
+    carrierId: string | null;
+    claimNumber: string | null;
+    adjusterEmail: string | null;
     quoteType: string | null;
     stage: {
       id: string;
@@ -66,6 +70,12 @@ interface Task {
       color: string;
       stageType: string;
       workflowType: string;
+    } | null;
+    carrierRef: {
+      id: string;
+      name: string;
+      unifiedEmail: string | null;
+      emailType: string;
     } | null;
   };
 }
@@ -98,6 +108,7 @@ export function TasksView({
   const [stages, setStages] = useState<{ id: string; name: string; color: string; isTerminal: boolean }[]>([]);
   const [mounted, setMounted] = useState(false);
   const [bulkDate, setBulkDate] = useState<Date | undefined>();
+  const [showBulkJoshDialog, setShowBulkJoshDialog] = useState(false);
 
   // Portal mount detection
   useEffect(() => { setMounted(true); }, []);
@@ -109,7 +120,7 @@ export function TasksView({
     });
   }, []);
 
-  const activeCount = activeTasks.length;
+  const activeCount = activeTasks.length + approvedTasks.length;
   const overdueCount = overdueTasks.length;
   const todayCount = todayTasks.length;
 
@@ -127,15 +138,30 @@ export function TasksView({
     );
   };
 
-  const filteredActive = useMemo(() => ({
-    overdue: filterTasks(overdueTasks),
-    today: filterTasks(todayTasks),
-    upcoming: filterTasks(upcomingTasks),
-  }), [search, overdueTasks, todayTasks, upcomingTasks]);
+  const filteredActive = useMemo(() => {
+    const now = new Date();
+    const dayStart = startOfDay(now);
+    const dayEnd = endOfDay(now);
+
+    const approvedOverdue: Task[] = [];
+    const approvedToday: Task[] = [];
+    const approvedUpcoming: Task[] = [];
+    for (const t of approvedTasks) {
+      const d = new Date(t.dueDate);
+      if (d < dayStart) approvedOverdue.push(t);
+      else if (d <= dayEnd) approvedToday.push(t);
+      else approvedUpcoming.push(t);
+    }
+
+    return {
+      overdue: filterTasks([...overdueTasks, ...approvedOverdue]),
+      today: filterTasks([...todayTasks, ...approvedToday]),
+      upcoming: filterTasks([...upcomingTasks, ...approvedUpcoming]),
+    };
+  }, [search, overdueTasks, todayTasks, upcomingTasks, approvedTasks]);
 
   const filteredSeasonal = useMemo(() => filterTasks(seasonalTasks), [search, seasonalTasks]);
   const filteredNotInterested = useMemo(() => filterTasks(notInterestedTasks), [search, notInterestedTasks]);
-  const filteredApproved = useMemo(() => filterTasks(approvedTasks), [search, approvedTasks]);
 
   const filteredActiveTotal = filteredActive.overdue.length + filteredActive.today.length + filteredActive.upcoming.length;
 
@@ -176,7 +202,16 @@ export function TasksView({
   const allActiveSelected = allVisibleActive.length > 0 && allVisibleActive.every((t) => selectedIds.has(t.id));
   const allSeasonalSelected = filteredSeasonal.length > 0 && filteredSeasonal.every((t) => selectedIds.has(t.id));
   const allNotInterestedSelected = filteredNotInterested.length > 0 && filteredNotInterested.every((t) => selectedIds.has(t.id));
-  const allApprovedSelected = filteredApproved.length > 0 && filteredApproved.every((t) => selectedIds.has(t.id));
+
+  const allTaskPool = useMemo(
+    () => [...activeTasks, ...approvedTasks, ...seasonalTasks, ...notInterestedTasks],
+    [activeTasks, approvedTasks, seasonalTasks, notInterestedTasks]
+  );
+
+  const selectedTasks = useMemo(() => {
+    if (selectedIds.size === 0) return [];
+    return allTaskPool.filter((t) => selectedIds.has(t.id));
+  }, [selectedIds, allTaskPool]);
 
   // Bulk actions
   const handleBulkReschedule = async (officeDays: number) => {
@@ -330,13 +365,6 @@ export function TasksView({
                 <Badge variant="secondary" className="ml-0.5 text-[10px] sm:ml-1 sm:text-xs">{seasonalTasks.length}</Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="approved" className="gap-1.5 text-xs sm:text-sm sm:gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              Approved
-              {approvedTasks.length > 0 && (
-                <Badge variant="secondary" className="ml-0.5 text-[10px] sm:ml-1 sm:text-xs">{approvedTasks.length}</Badge>
-              )}
-            </TabsTrigger>
             <TabsTrigger value="not_interested" className="gap-1.5 text-xs sm:text-sm sm:gap-2">
               <XCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span className="hidden sm:inline">Not Interested</span>
@@ -367,7 +395,7 @@ export function TasksView({
             <Card className="p-8 text-center">
               <ListTodo className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
               <p className="text-muted-foreground">
-                {activeCount === 0 ? "No active tasks. You're all caught up!" : "No tasks match your search."}
+                {(activeTasks.length + approvedTasks.length) === 0 ? "No active tasks. You're all caught up!" : "No tasks match your search."}
               </p>
             </Card>
           ) : (
@@ -422,6 +450,7 @@ export function TasksView({
                   />
                 </div>
               )}
+
             </>
           )}
         </TabsContent>
@@ -444,29 +473,6 @@ export function TasksView({
           <TaskList
             tasks={filteredSeasonal}
             emptyMessage="No seasonal follow-up tasks."
-            selectedIds={selectedIds}
-            onToggleSelect={toggleSelect}
-          />
-        </TabsContent>
-
-        {/* Approved Tab */}
-        <TabsContent value="approved" className="space-y-3">
-          {filteredApproved.length > 0 && (
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">{filteredApproved.length} task{filteredApproved.length !== 1 ? "s" : ""}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => allApprovedSelected ? deselectAll(filteredApproved) : selectAll(filteredApproved)}
-              >
-                {allApprovedSelected ? "Deselect All" : "Select All"}
-              </Button>
-            </div>
-          )}
-          <TaskList
-            tasks={filteredApproved}
-            emptyMessage="No tasks for approved jobs."
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
           />
@@ -561,6 +567,18 @@ export function TasksView({
             </PopoverContent>
           </Popover>
 
+          {/* Bulk Josh Directives */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 h-9"
+            disabled={isBulkActing}
+            onClick={() => setShowBulkJoshDialog(true)}
+          >
+            <Zap className="w-4 h-4" />
+            Bulk Action
+          </Button>
+
           <div className="w-px h-6 bg-border" />
 
           {/* Clear */}
@@ -573,6 +591,17 @@ export function TasksView({
         </div>,
         document.body
       )}
+
+      {/* Bulk Josh Dialog */}
+      <BulkJoshDialog
+        open={showBulkJoshDialog}
+        onOpenChange={setShowBulkJoshDialog}
+        tasks={selectedTasks}
+        onComplete={() => {
+          clearSelection();
+          router.refresh();
+        }}
+      />
     </div>
   );
 }

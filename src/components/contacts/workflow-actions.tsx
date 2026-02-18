@@ -26,8 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Sparkles } from "lucide-react";
-import { JoshAIButton } from "@/components/tasks/task-action-button";
+import { TaskActionButton } from "@/components/tasks/task-action-button";
 import { TemplateSelector } from "@/components/templates/template-selector";
 import { composeSMSUrl, composeEmailUrl } from "@/lib/messaging";
 import { type TemplateContext } from "@/lib/templates";
@@ -52,14 +51,11 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
-  Send,
   ThumbsUp,
   Snowflake,
   FileText,
   ClipboardCheck,
   XCircle,
-  Mail,
-  Upload,
   Briefcase,
   Home,
   Shield,
@@ -159,16 +155,6 @@ export function WorkflowActions({
   
   const [notes, setNotes] = useState("");
 
-  // Carrier follow-up AI state
-  const [showCarrierFollowUpDialog, setShowCarrierFollowUpDialog] = useState(false);
-  const [carrierDraftMessage, setCarrierDraftMessage] = useState("");
-  const [carrierDraftSubject, setCarrierDraftSubject] = useState("");
-  const [carrierDraftToEmail, setCarrierDraftToEmail] = useState("");
-  const [carrierNeedsAdjusterEmail, setCarrierNeedsAdjusterEmail] = useState(false);
-  const [adjusterEmailInput, setAdjusterEmailInput] = useState(contact.adjusterEmail || "");
-  const [isGeneratingCarrierDraft, setIsGeneratingCarrierDraft] = useState(false);
-  const [carrierCustomContext, setCarrierCustomContext] = useState("");
-  
   // Check if required claim info is missing
   const isClaimInfoMissing = !contact.carrier || !contact.dateOfLoss;
   const [seasonalDate, setSeasonalDate] = useState<Date>(addMonths(new Date(), 3));
@@ -514,56 +500,6 @@ export function WorkflowActions({
     }
   };
 
-  // Carrier Follow-Up AI handler
-  const handleOpenCarrierFollowUp = async () => {
-    setIsGeneratingCarrierDraft(true);
-    setShowCarrierFollowUpDialog(true);
-    setCarrierDraftMessage("");
-    setCarrierDraftSubject("");
-    setCarrierDraftToEmail("");
-    setCarrierNeedsAdjusterEmail(false);
-
-    try {
-      const response = await fetch("/api/josh/draft-carrier-followup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contactId: contact.id,
-          customContext: carrierCustomContext || undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        toast.error("Failed to generate carrier follow-up");
-        setShowCarrierFollowUpDialog(false);
-        return;
-      }
-
-      const data = await response.json();
-      setCarrierDraftMessage(data.message || "");
-      setCarrierDraftSubject(data.subject || "");
-      setCarrierDraftToEmail(data.toEmail || "");
-      setCarrierNeedsAdjusterEmail(data.needsAdjusterEmail || false);
-    } catch {
-      toast.error("Failed to generate carrier follow-up");
-      setShowCarrierFollowUpDialog(false);
-    } finally {
-      setIsGeneratingCarrierDraft(false);
-    }
-  };
-
-  const handleSendCarrierFollowUp = () => {
-    const toEmail = carrierNeedsAdjusterEmail ? adjusterEmailInput : carrierDraftToEmail;
-    if (!toEmail) {
-      toast.error("Please enter the adjuster's email address");
-      return;
-    }
-    const mailtoUrl = composeEmailUrl(toEmail, carrierDraftSubject, carrierDraftMessage);
-    window.location.href = mailtoUrl;
-    setShowCarrierFollowUpDialog(false);
-    setCarrierCustomContext("");
-  };
-
   // Form reset helpers
   const resetScheduleForm = () => {
     setAppointmentDate(undefined);
@@ -875,102 +811,25 @@ export function WorkflowActions({
           <CardTitle className="text-base">Actions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {/* Primary Action */}
-          {primaryAction && (
-            <div className="flex gap-2">
-              <Button
-                variant={primaryAction.variant}
-                className="flex-1 justify-start gap-2"
-                onClick={primaryAction.onClick}
-                disabled={primaryAction.disabled || isLoading}
-              >
-                <primaryAction.icon className="w-4 h-4" />
-                {primaryAction.label}
-              </Button>
-              {/* Josh AI Magic Button */}
-              <JoshAIButton
-                contact={{
-                  id: contact.id,
-                  firstName: contact.firstName,
-                  lastName: contact.lastName,
-                  phone: contact.phone,
-                  email: contact.email,
-                  address: contact.address,
-                  carrier: contact.carrier,
-                  quoteType: contact.quoteType,
-                }}
-                messageType={
-                  stageName === STAGE_NAMES.NEW_LEAD 
-                    ? (contact.firstMessageSentAt ? "first_message_follow_up" : "first_message")
-                    : stageName === STAGE_NAMES.RETAIL_PROSPECT 
-                    ? "quote_follow_up"
-                    : stageName === STAGE_NAMES.CLAIM_PROSPECT 
-                    ? "claim_rec_follow_up"
-                    : "general_follow_up"
-                }
-                variant="outline"
-                size="default"
-              />
-            </div>
-          )}
-
-          {/* Schedule Inspection - Always available for active non-scheduled stages */}
-          {stageName !== STAGE_NAMES.SCHEDULED_INSPECTION && 
-           stageName !== STAGE_NAMES.OPEN_CLAIM && (
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2"
-              onClick={() => setShowScheduleDialog(true)}
-            >
-              <CalendarIcon className="w-4 h-4" />
-              Schedule Inspection
-            </Button>
-          )}
-
-          {/* PA Agreement option for claim prospects */}
-          {(stageName === STAGE_NAMES.CLAIM_PROSPECT && taskType !== "PA_AGREEMENT") && (
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2"
-              onClick={() => handleOpenTemplate({
-                category: "PA_AGREEMENT",
-                preferredType: "email",
-                title: "Send PA Agreement",
-                onComplete: () => setShowPADialog(true),
-              })}
-            >
-              <FileText className="w-4 h-4" />
-              Send PA Agreement
-            </Button>
-          )}
-
-          {/* AI Carrier Follow-Up - available on claim stages */}
-          {(stageName === STAGE_NAMES.CLAIM_PROSPECT || stageName === STAGE_NAMES.OPEN_CLAIM) && (
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
-              onClick={handleOpenCarrierFollowUp}
-              disabled={isLoading}
-            >
-              <Sparkles className="w-4 h-4" />
-              AI Carrier Follow Up
-            </Button>
-          )}
-
-          {/* Upload PA for PA Follow Up */}
-          {taskType === "PA_FOLLOW_UP" && (
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2"
-              onClick={() => {
-                // Navigate to files tab with upload prompt
-                toast.info("Upload signed PA in the Files tab");
-              }}
-            >
-              <Upload className="w-4 h-4" />
-              Upload Signed PA
-            </Button>
-          )}
+          {/* Unified Action Button */}
+          <TaskActionButton
+            contact={{
+              id: contact.id,
+              firstName: contact.firstName,
+              lastName: contact.lastName,
+              phone: contact.phone,
+              email: contact.email,
+              address: contact.address,
+              carrier: contact.carrier,
+              quoteType: contact.quoteType,
+            }}
+            taskId={currentTask?.id}
+            taskType={currentTask?.taskType}
+            onActionComplete={() => router.refresh()}
+            variant="default"
+            size="default"
+            className="w-full"
+          />
 
           <div className="border-t pt-2 mt-2 space-y-2">
             {/* Terminal Status Options */}
@@ -1623,99 +1482,6 @@ export function WorkflowActions({
         </DialogContent>
       </Dialog>
 
-      {/* AI Carrier Follow-Up Dialog */}
-      <Dialog open={showCarrierFollowUpDialog} onOpenChange={setShowCarrierFollowUpDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-purple-500" />
-              AI Carrier Follow-Up
-            </DialogTitle>
-            <DialogDescription>
-              Josh drafted a follow-up email for {contact.firstName} {contact.lastName}&apos;s carrier.
-              Review and edit before sending.
-            </DialogDescription>
-          </DialogHeader>
-
-          {isGeneratingCarrierDraft ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3">
-              <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-              <p className="text-muted-foreground">Josh is drafting your carrier email...</p>
-            </div>
-          ) : (
-            <div className="space-y-4 py-2">
-              {/* To field */}
-              <div className="space-y-2">
-                <Label>To</Label>
-                {carrierNeedsAdjusterEmail ? (
-                  <>
-                    <Input
-                      placeholder="Enter adjuster's email address"
-                      value={adjusterEmailInput}
-                      onChange={(e) => setAdjusterEmailInput(e.target.value)}
-                      type="email"
-                    />
-                    <p className="text-xs text-amber-600">This carrier requires a per-adjuster email. Please enter the adjuster&apos;s email.</p>
-                  </>
-                ) : (
-                  <Input value={carrierDraftToEmail} onChange={(e) => setCarrierDraftToEmail(e.target.value)} type="email" />
-                )}
-              </div>
-
-              {/* Subject */}
-              <div className="space-y-2">
-                <Label>Subject</Label>
-                <Input value={carrierDraftSubject} onChange={(e) => setCarrierDraftSubject(e.target.value)} />
-              </div>
-
-              {/* Body */}
-              <div className="space-y-2">
-                <Label>Email Body</Label>
-                <Textarea
-                  value={carrierDraftMessage}
-                  onChange={(e) => setCarrierDraftMessage(e.target.value)}
-                  rows={10}
-                  className="font-mono text-sm"
-                />
-              </div>
-
-              {/* Optional context for regenerating */}
-              <div className="space-y-2">
-                <Label className="text-muted-foreground text-xs">Additional context (optional — for regenerating)</Label>
-                <Input
-                  placeholder="e.g., 'Emphasize the water damage photos'"
-                  value={carrierCustomContext}
-                  onChange={(e) => setCarrierCustomContext(e.target.value)}
-                />
-              </div>
-            </div>
-          )}
-
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setShowCarrierFollowUpDialog(false)}>Cancel</Button>
-            {!isGeneratingCarrierDraft && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={handleOpenCarrierFollowUp}
-                  disabled={isGeneratingCarrierDraft}
-                >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Regenerate
-                </Button>
-                <Button
-                  onClick={handleSendCarrierFollowUp}
-                  disabled={isGeneratingCarrierDraft}
-                  className="bg-purple-600 hover:bg-purple-700"
-                >
-                  <Mail className="w-4 h-4 mr-2" />
-                  Send via Email Client
-                </Button>
-              </>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
