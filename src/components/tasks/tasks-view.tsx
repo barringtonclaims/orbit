@@ -312,38 +312,41 @@ export function TasksView({
 
       {/* Tabs */}
       <Tabs defaultValue="active" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="active" className="gap-2">
-            <ListTodo className="w-4 h-4" />
-            Active
-            {activeCount > 0 && (
-              <Badge variant={overdueCount > 0 ? "destructive" : "secondary"} className="ml-1">
-                {activeCount}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="seasonal" className="gap-2">
-            <Snowflake className="w-4 h-4" />
-            Seasonal
-            {seasonalTasks.length > 0 && (
-              <Badge variant="secondary" className="ml-1">{seasonalTasks.length}</Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="approved" className="gap-2">
-            <CheckCircle2 className="w-4 h-4" />
-            Approved
-            {approvedTasks.length > 0 && (
-              <Badge variant="secondary" className="ml-1">{approvedTasks.length}</Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="not_interested" className="gap-2">
-            <XCircle className="w-4 h-4" />
-            Not Interested
-            {notInterestedTasks.length > 0 && (
-              <Badge variant="secondary" className="ml-1">{notInterestedTasks.length}</Badge>
-            )}
-          </TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto -mx-1 px-1">
+          <TabsList className="inline-flex w-auto min-w-full sm:w-auto">
+            <TabsTrigger value="active" className="gap-1.5 text-xs sm:text-sm sm:gap-2">
+              <ListTodo className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              Active
+              {activeCount > 0 && (
+                <Badge variant={overdueCount > 0 ? "destructive" : "secondary"} className="ml-0.5 text-[10px] sm:ml-1 sm:text-xs">
+                  {activeCount}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="seasonal" className="gap-1.5 text-xs sm:text-sm sm:gap-2">
+              <Snowflake className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              Seasonal
+              {seasonalTasks.length > 0 && (
+                <Badge variant="secondary" className="ml-0.5 text-[10px] sm:ml-1 sm:text-xs">{seasonalTasks.length}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="approved" className="gap-1.5 text-xs sm:text-sm sm:gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              Approved
+              {approvedTasks.length > 0 && (
+                <Badge variant="secondary" className="ml-0.5 text-[10px] sm:ml-1 sm:text-xs">{approvedTasks.length}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="not_interested" className="gap-1.5 text-xs sm:text-sm sm:gap-2">
+              <XCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">Not Interested</span>
+              <span className="sm:hidden">N/I</span>
+              {notInterestedTasks.length > 0 && (
+                <Badge variant="secondary" className="ml-0.5 text-[10px] sm:ml-1 sm:text-xs">{notInterestedTasks.length}</Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* Active Tab */}
         <TabsContent value="active" className="space-y-6">
