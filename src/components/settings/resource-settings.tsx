@@ -179,8 +179,9 @@ export function ResourceSettings({ initialCompanies }: ResourceSettingsProps) {
         const result = await createResourceCompany(companyForm);
         if (result.error) { toast.error(result.error); return; }
         if (result.data) {
-          setCompanies((prev) => [...prev, { ...(result.data as ResourceCompanyData), contacts: [] }]);
-          setOpenCompanies((prev) => new Set([...prev, (result.data as ResourceCompanyData).id]));
+          const newCompany = result.data as unknown as ResourceCompanyData;
+          setCompanies((prev) => [...prev, { ...newCompany, contacts: [] }]);
+          setOpenCompanies((prev) => new Set([...prev, newCompany.id]));
         }
         toast.success("Company added");
       }
