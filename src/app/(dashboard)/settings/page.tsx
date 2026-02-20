@@ -1,19 +1,25 @@
 import { Suspense } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getOrganization } from "@/lib/actions/organizations";
+import { getOrganization, getUserProfile } from "@/lib/actions/organizations";
+import { ProfileSettings } from "@/components/settings/profile-settings";
 import { getTemplates } from "@/lib/actions/templates";
 import { getGoogleConnectionStatus } from "@/lib/actions/google";
+import { getCustomAppointmentTypes } from "@/lib/actions/custom-types";
+import { getCustomTaskTypes } from "@/lib/actions/custom-types";
 import { ScheduleSettings } from "@/components/settings/schedule-settings";
 import { TemplateSettings } from "@/components/settings/template-settings";
 import { StageSettings } from "@/components/settings/stage-settings";
+import { getLeadStages } from "@/lib/actions/stages";
 import { GoogleSettings } from "@/components/settings/google-settings";
 import { CarrierSettings } from "@/components/settings/carrier-settings";
+import { AppointmentTypeSettings } from "@/components/settings/appointment-type-settings";
+import { TaskTypeSettings } from "@/components/settings/task-type-settings";
+import { ResourceSettings } from "@/components/settings/resource-settings";
+import { getResourceCompanies } from "@/lib/actions/resources";
 import { JoshIntake } from "@/components/josh/josh-intake";
 import { 
   User, 
@@ -26,6 +32,7 @@ import {
   Settings2,
   Plug,
   Building2,
+  Contact,
 } from "lucide-react";
 
 export const metadata = {
@@ -39,15 +46,25 @@ export default async function SettingsPage({
 }) {
   const { tab, success, error } = await searchParams;
   
-  const [orgResult, templatesResult, googleResult] = await Promise.all([
+  const [orgResult, templatesResult, googleResult, taskTypesResult, appointmentTypesResult, stagesResult, profileResult, resourceResult] = await Promise.all([
     getOrganization(),
     getTemplates(),
     getGoogleConnectionStatus(),
+    getCustomTaskTypes(),
+    getCustomAppointmentTypes(),
+    getLeadStages(),
+    getUserProfile(),
+    getResourceCompanies(),
   ]);
 
   const org = orgResult.data;
   const templates = templatesResult.data || [];
   const googleStatus = googleResult.data;
+  const taskTypes = taskTypesResult.data || [];
+  const appointmentTypes = appointmentTypesResult.data || [];
+  const stages = stagesResult.data || [];
+  const profile = profileResult.data;
+  const resourceCompanies = resourceResult.data || [];
 
   const defaultTab = tab || "general";
 
@@ -88,6 +105,10 @@ export default async function SettingsPage({
             <Building2 className="w-4 h-4" />
             <span className="hidden sm:inline">Carriers</span>
           </TabsTrigger>
+          <TabsTrigger value="resources" className="gap-2 flex-1 min-w-fit">
+            <Contact className="w-4 h-4" />
+            <span className="hidden sm:inline">Resources</span>
+          </TabsTrigger>
           <TabsTrigger value="templates" className="gap-2 flex-1 min-w-fit">
             <FileText className="w-4 h-4" />
             <span className="hidden sm:inline">Templates</span>
@@ -101,34 +122,11 @@ export default async function SettingsPage({
         {/* General Settings */}
         <TabsContent value="general" className="space-y-6">
           {/* Profile */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <User className="w-5 h-5" />
-                Profile
-              </CardTitle>
-              <CardDescription>
-                Your personal information
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="fullName">Full Name</Label>
-                  <Input id="fullName" placeholder="John Doe" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" placeholder="john@example.com" disabled />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="company">Company Name</Label>
-                <Input id="company" placeholder="Your Roofing Company" />
-              </div>
-              <Button>Save Changes</Button>
-            </CardContent>
-          </Card>
+          <ProfileSettings
+            initialFullName={profile?.fullName || ""}
+            initialEmail={profile?.email || ""}
+            initialCompanyName={profile?.companyName || ""}
+          />
 
           {/* Schedule Configuration */}
           {org && (
@@ -141,7 +139,13 @@ export default async function SettingsPage({
           )}
 
           {/* Stage Settings */}
-          <StageSettings />
+          <StageSettings initialStages={stages} />
+
+          {/* Appointment Types */}
+          <AppointmentTypeSettings initialTypes={appointmentTypes} />
+
+          {/* Task Types */}
+          <TaskTypeSettings initialTypes={taskTypes} stages={stages} />
 
           {/* Appearance */}
           <Card>
@@ -233,10 +237,15 @@ export default async function SettingsPage({
           <CarrierSettings />
         </TabsContent>
 
+        {/* Resource Contacts */}
+        <TabsContent value="resources">
+          <ResourceSettings initialCompanies={resourceCompanies} />
+        </TabsContent>
+
         {/* Templates Settings */}
         <TabsContent value="templates">
           <Suspense fallback={<div>Loading templates...</div>}>
-            <TemplateSettings templates={templates} />
+            <TemplateSettings templates={templates} taskTypes={taskTypes} />
           </Suspense>
         </TabsContent>
 

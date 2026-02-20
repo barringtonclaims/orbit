@@ -204,8 +204,7 @@ export default async function ContactDetailPage({
             currentTask={nextTask ? { 
               id: nextTask.id, 
               taskType: nextTask.taskType,
-              actionButton: nextTask.actionButton,
-              appointmentTime: nextTask.appointmentTime,
+              dueDate: nextTask.dueDate,
             } : null}
             inspectionDays={inspectionDays}
           />

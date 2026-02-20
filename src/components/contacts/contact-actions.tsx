@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +20,9 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { deleteContact } from "@/lib/actions/contacts";
+import { getCustomAppointmentTypes } from "@/lib/actions/custom-types";
 import { SMSComposer } from "@/components/messaging/sms-composer";
+import { ScheduleAppointmentDialog } from "@/components/shared/schedule-appointment-dialog";
 import { 
   MoreHorizontal, 
   MessageSquare, 
@@ -28,7 +30,7 @@ import {
   Phone, 
   Edit, 
   Trash2,
-  Calendar,
+  CalendarDays,
   Send
 } from "lucide-react";
 
@@ -39,6 +41,9 @@ interface ContactActionsProps {
     lastName: string;
     phone: string | null;
     email: string | null;
+    address?: string | null;
+    city?: string | null;
+    state?: string | null;
   };
   defaultOpenSMS?: boolean;
   inspectionDays?: number[];
@@ -49,6 +54,14 @@ export function ContactActions({ contact, defaultOpenSMS = false, inspectionDays
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showSMSComposer, setShowSMSComposer] = useState(defaultOpenSMS);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [appointmentTypes, setAppointmentTypes] = useState<{ id: string; name: string; includesLocation: boolean }[]>([]);
+  const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
+
+  useEffect(() => {
+    getCustomAppointmentTypes().then((result) => {
+      if (result.data) setAppointmentTypes(result.data);
+    });
+  }, []);
 
   const handleCall = () => {
     if (!contact.phone) {
@@ -131,6 +144,10 @@ export function ContactActions({ contact, defaultOpenSMS = false, inspectionDays
                 Send Message
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem onClick={() => setShowAppointmentDialog(true)}>
+              <CalendarDays className="w-4 h-4 mr-2" />
+              Schedule Appointment
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => setShowDeleteDialog(true)}
@@ -142,6 +159,23 @@ export function ContactActions({ contact, defaultOpenSMS = false, inspectionDays
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* Schedule Appointment Dialog */}
+      <ScheduleAppointmentDialog
+        open={showAppointmentDialog}
+        onOpenChange={setShowAppointmentDialog}
+        contact={{
+          id: contact.id,
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          address: contact.address ?? undefined,
+          city: contact.city ?? null,
+          state: contact.state ?? null,
+          phone: contact.phone,
+        }}
+        appointmentTypes={appointmentTypes}
+        onSuccess={() => router.refresh()}
+      />
 
       {/* SMS Composer */}
       {contact.phone && (

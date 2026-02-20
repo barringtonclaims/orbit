@@ -29,7 +29,8 @@ export default async function CalendarPage() {
       </div>
 
       <CalendarView 
-        events={data.tasks} 
+        tasks={data.tasks} 
+        appointments={data.appointments}
         settings={data.settings} 
       />
     </div>

@@ -97,8 +97,7 @@ interface WorkflowActionsProps {
   currentTask?: {
     id: string;
     taskType: string;
-    actionButton: string | null;
-    appointmentTime?: Date | null;
+    dueDate?: Date;
   } | null;
   inspectionDays?: number[];
   onRefresh?: () => void;
@@ -164,7 +163,6 @@ export function WorkflowActions({
   const stageType = contact.stage?.stageType || "ACTIVE";
   const workflowType = contact.stage?.workflowType || "BOTH";
   const taskType = currentTask?.taskType;
-  const actionButton = currentTask?.actionButton;
 
   // Build template context - use state values for claim info if available (may have just been entered)
   const templateContext: TemplateContext = {
@@ -619,9 +617,9 @@ export function WorkflowActions({
     }
   };
 
-  // Check if appointment is in the past
-  const isAppointmentPast = currentTask?.appointmentTime 
-    ? new Date(currentTask.appointmentTime) < new Date() 
+  // Check if appointment/due date is in the past
+  const isAppointmentPast = currentTask?.dueDate 
+    ? new Date(currentTask.dueDate) < new Date() 
     : false;
 
   // Determine primary action based on stage, task, and workflow state

@@ -9,9 +9,8 @@ import {
   getNextOfficeDayAfter,
   getSeasonalFollowUpDate,
   getSpringReminderDate,
-  getActionButtonForTaskType,
-  getCurrentActionForTask,
   enforceOfficeDay,
+  normalizeOfficeDays,
   type TaskTypeForTitle 
 } from "@/lib/scheduling";
 import { STAGE_NAMES } from "@/types";
@@ -32,17 +31,33 @@ import { STAGE_NAMES } from "@/types";
 // ============================================
 
 async function getOrganizationSettings(userId: string) {
-  const membership = await prisma.organizationMember.findFirst({
-    where: { userId },
-    include: { organization: true },
+  // Respect the user's active organization so settings always match what they're working in
+  const dbUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { activeOrganizationId: true },
   });
-  
+
+  let membership;
+  if (dbUser?.activeOrganizationId) {
+    membership = await prisma.organizationMember.findFirst({
+      where: { userId, organizationId: dbUser.activeOrganizationId },
+      include: { organization: true },
+    });
+  }
+  if (!membership) {
+    membership = await prisma.organizationMember.findFirst({
+      where: { userId },
+      include: { organization: true },
+      orderBy: { joinedAt: "asc" },
+    });
+  }
+
   return {
     organizationId: membership?.organizationId,
-    officeDays: membership?.organization.officeDays || [1, 3, 5],
-    inspectionDays: membership?.organization.inspectionDays || [2, 4],
-    seasonalFollowUpMonth: membership?.organization.seasonalFollowUpMonth || 4,
-    seasonalFollowUpDay: membership?.organization.seasonalFollowUpDay || 1,
+    officeDays: normalizeOfficeDays(membership?.organization?.officeDays),
+    inspectionDays: normalizeOfficeDays(membership?.organization?.inspectionDays, [2, 4]),
+    seasonalFollowUpMonth: membership?.organization?.seasonalFollowUpMonth || 4,
+    seasonalFollowUpDay: membership?.organization?.seasonalFollowUpDay || 1,
   };
 }
 
@@ -84,7 +99,54 @@ async function cancelPendingTasks(contactId: string) {
   });
 }
 
-type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
+/** Map TaskTypeForTitle (enum-style) to human-readable string for DB storage */
+function taskTypeToString(taskType: TaskTypeForTitle): string {
+  const mapping: Record<TaskTypeForTitle, string> = {
+    FIRST_MESSAGE: "First Message",
+    FIRST_MESSAGE_FOLLOW_UP: "First Message Follow Up",
+    SET_APPOINTMENT: "Set Appointment",
+    APPOINTMENT: "Appointment",
+    APPOINTMENT_REMINDER: "Appointment Reminder",
+    DISCUSS_INSPECTION: "Discuss Inspection",
+    ASSIGN_STATUS: "Assign Status",
+    WRITE_QUOTE: "Send Quote",
+    SEND_QUOTE: "Send Quote",
+    QUOTE_FOLLOW_UP: "Quote Follow Up",
+    CLAIM_RECOMMENDATION: "Claim Recommendation",
+    CLAIM_REC_FOLLOW_UP: "Claim Rec Follow Up",
+    PA_AGREEMENT: "PA Agreement",
+    PA_FOLLOW_UP: "PA Follow Up",
+    CLAIM_FOLLOW_UP: "Claim Follow Up",
+    SEASONAL_FOLLOW_UP: "Seasonal Follow Up",
+    FOLLOW_UP: "Follow Up",
+    CUSTOM: "Custom",
+  };
+  return mapping[taskType] ?? "Follow Up";
+}
+
+/** Map human-readable string from DB back to TaskTypeForTitle for createTask */
+function stringToTaskType(s: string): TaskTypeForTitle {
+  const mapping: Record<string, TaskTypeForTitle> = {
+    "First Message": "FIRST_MESSAGE",
+    "First Message Follow Up": "FIRST_MESSAGE_FOLLOW_UP",
+    "Set Appointment": "SET_APPOINTMENT",
+    "Appointment": "APPOINTMENT",
+    "Appointment Reminder": "APPOINTMENT_REMINDER",
+    "Discuss Inspection": "DISCUSS_INSPECTION",
+    "Assign Status": "ASSIGN_STATUS",
+    "Send Quote": "SEND_QUOTE",
+    "Quote Follow Up": "QUOTE_FOLLOW_UP",
+    "Claim Recommendation": "CLAIM_RECOMMENDATION",
+    "Claim Rec Follow Up": "CLAIM_REC_FOLLOW_UP",
+    "PA Agreement": "PA_AGREEMENT",
+    "PA Follow Up": "PA_FOLLOW_UP",
+    "Claim Follow Up": "CLAIM_FOLLOW_UP",
+    "Seasonal Follow Up": "SEASONAL_FOLLOW_UP",
+    "Follow Up": "FOLLOW_UP",
+    "Custom": "CUSTOM",
+  };
+  return mapping[s] ?? "FOLLOW_UP";
+}
 
 async function createTask(params: {
   contactId: string;
@@ -92,35 +154,19 @@ async function createTask(params: {
   taskType: TaskTypeForTitle;
   contactName: string;
   dueDate: Date;
-  appointmentTime?: Date;
-  extra?: { quoteType?: string };
-  currentAction?: string; // Override the current action (for dynamic tasks like SET_APPOINTMENT)
-  contact?: { firstMessageSentAt?: Date | null }; // For calculating dynamic current action
+  extra?: { quoteType?: string; appointmentDate?: Date };
 }) {
-  const actionButton = getActionButtonForTaskType(params.taskType);
-  
-  // Calculate the current action - this may differ from actionButton for dynamic tasks
-  let currentAction: string | null = params.currentAction || actionButton;
-  
-  // For SET_APPOINTMENT task, the current action depends on whether first message was sent
-  if (params.taskType === 'SET_APPOINTMENT' && params.contact) {
-    currentAction = getCurrentActionForTask('SET_APPOINTMENT', params.contact);
-  }
-  
   return prisma.task.create({
     data: {
       contactId: params.contactId,
       userId: params.userId,
       title: generateTaskTitle(params.contactName, params.taskType, {
-        appointmentDate: params.appointmentTime,
+        appointmentDate: params.extra?.appointmentDate,
         quoteType: params.extra?.quoteType,
       }),
       dueDate: params.dueDate,
       status: "PENDING",
-      taskType: params.taskType,
-      actionButton: actionButton as ActionButtonType,
-      currentAction: currentAction as ActionButtonType,
-      appointmentTime: params.appointmentTime,
+      taskType: taskTypeToString(params.taskType),
     },
   });
 }
@@ -352,7 +398,7 @@ export async function transitionToScheduledInspection(
       taskType: "APPOINTMENT",
       contactName,
       dueDate: appointmentDate,
-      appointmentTime: appointmentDate,
+      extra: { appointmentDate },
     });
 
     // Add timeline entries
@@ -947,9 +993,7 @@ export async function transitionToTerminal(
           title: `${contactName} - Approval Check In`,
           dueDate: checkInDate,
           status: "PENDING",
-          taskType: "FOLLOW_UP",
-          actionButton: null,
-          currentAction: null,
+          taskType: "Follow Up",
         },
       });
     }
@@ -1108,9 +1152,7 @@ export async function updateJobStatus(
             title: `${contactName} - Invoice Follow Up`,
             dueDate: nextDate,
             status: "PENDING",
-            taskType: "FOLLOW_UP",
-            actionButton: null,
-            currentAction: null,
+            taskType: "Follow Up",
           },
         });
       } else if (jobStatus === "IN_PROGRESS") {
@@ -1121,9 +1163,7 @@ export async function updateJobStatus(
             title: `${contactName} - Job Check In`,
             dueDate: nextDate,
             status: "PENDING",
-            taskType: "FOLLOW_UP",
-            actionButton: null,
-            currentAction: null,
+            taskType: "Follow Up",
           },
         });
       }
@@ -1181,7 +1221,7 @@ export async function rescheduleFollowUp(taskId: string) {
     await createTask({
       contactId: task.contactId,
       userId: user.id,
-      taskType: task.taskType as TaskTypeForTitle,
+      taskType: stringToTaskType(task.taskType),
       contactName,
       dueDate: nextDate,
     });
@@ -1260,83 +1300,12 @@ export async function completeTaskWithoutReschedule(taskId: string, notes?: stri
  * The "Discuss Initial Inspection" task is already auto-created when the inspection is scheduled,
  * so this cron just marks the appointment task as completed.
  * Should be called by daily cron job.
+ * TODO: Migrate to query Appointment model
  */
 export async function checkPassedInspections() {
   try {
-    const now = new Date();
-    
-    // Find all contacts with passed inspection appointments
-    const contactsWithPassedInspections = await prisma.contact.findMany({
-      where: {
-        stage: {
-          name: STAGE_NAMES.SCHEDULED_INSPECTION,
-        },
-        tasks: {
-          some: {
-            taskType: "APPOINTMENT",
-            status: { in: ["PENDING", "IN_PROGRESS"] },
-            appointmentTime: {
-              lt: now,
-            },
-          },
-        },
-      },
-      include: {
-        tasks: {
-          where: {
-            status: { in: ["PENDING", "IN_PROGRESS"] },
-          },
-        },
-        assignedTo: true,
-        organization: true,
-      },
-    });
-
-    const results = [];
-    for (const contact of contactsWithPassedInspections) {
-      // Mark inspection task as completed
-      const appointmentTasks = contact.tasks.filter(t => t.taskType === "APPOINTMENT");
-      for (const task of appointmentTasks) {
-        await prisma.task.update({
-          where: { id: task.id },
-          data: {
-            status: "COMPLETED",
-            completedAt: now,
-          },
-        });
-      }
-
-      // Check if discuss inspection task already exists (it should from scheduling)
-      const hasDiscussTask = contact.tasks.some(t => 
-        t.taskType === "DISCUSS_INSPECTION" && 
-        (t.status === "PENDING" || t.status === "IN_PROGRESS")
-      );
-
-      // If no discuss task exists (fallback), create one for today
-      if (!hasDiscussTask) {
-        const contactName = `${contact.firstName} ${contact.lastName}`;
-        const actionButton = getActionButtonForTaskType("DISCUSS_INSPECTION");
-        const officeDays = contact.organization.officeDays || [1, 3, 5];
-        const dueDate = enforceOfficeDay(now, officeDays);
-        
-        await prisma.task.create({
-          data: {
-            contactId: contact.id,
-            userId: contact.assignedToId || contact.createdById,
-            title: generateTaskTitle(contactName, "DISCUSS_INSPECTION"),
-            dueDate,
-            status: "PENDING",
-            taskType: "DISCUSS_INSPECTION",
-            actionButton: actionButton as ActionButtonType,
-            currentAction: actionButton as ActionButtonType,
-          },
-        });
-      }
-
-      results.push({ contactId: contact.id, contactName: `${contact.firstName} ${contact.lastName}` });
-    }
-
-    return { success: true, processed: results.length, contacts: results };
+    // TODO: Migrate to query Appointment model
+    return { success: true, processed: 0, contacts: [] };
   } catch (error) {
     console.error("Error checking passed inspections:", error);
     return { error: "Failed to check passed inspections" };
@@ -1362,7 +1331,7 @@ export async function checkSeasonalReminders() {
         // Don't create duplicate tasks
         tasks: {
           none: {
-            taskType: "FOLLOW_UP",
+            taskType: "Follow Up",
             status: { in: ["PENDING", "IN_PROGRESS"] },
           },
         },
@@ -1383,8 +1352,7 @@ export async function checkSeasonalReminders() {
           title: `${contactName} - Spring Follow Up`,
           dueDate: today,
           status: "PENDING",
-          taskType: "FOLLOW_UP",
-          actionButton: "SEND_FIRST_MESSAGE",
+          taskType: "Follow Up",
         },
       });
 
@@ -1430,12 +1398,8 @@ export async function checkContactsWithoutTasks(organizationId?: string) {
     });
     
     const contactsWithoutTasks = allContacts.filter(contact => {
-      // Only skip truly "done" stages - Seasonal and Not Interested
-      // Approved contacts SHOULD have tasks (check-ins, invoice follow-ups)
-      const isSkipped = contact.stage?.stageType === "SEASONAL" ||
-                        contact.stage?.stageType === "NOT_INTERESTED";
       const hasPendingTasks = contact.tasks.length > 0;
-      return !isSkipped && !hasPendingTasks;
+      return !hasPendingTasks;
     });
     
     // Now fetch full contact details for those that need tasks
@@ -1454,23 +1418,60 @@ export async function checkContactsWithoutTasks(organizationId?: string) {
     const results = [];
     for (const contact of contactsToFix) {
       const contactName = `${contact.firstName} ${contact.lastName}`;
-      const officeDays = contact.organization?.officeDays || [1, 3, 5];
+      const officeDays = normalizeOfficeDays(contact.organization?.officeDays);
+      const stageType = contact.stage?.stageType;
+
+      // Seasonal contacts get a SEASONAL_FOLLOW_UP task due at the org's configured spring date
+      if (stageType === "SEASONAL") {
+        const org = contact.organization as typeof contact.organization & { seasonalFollowUpMonth?: number | null; seasonalFollowUpDay?: number | null };
+        const seasonalMonth = org?.seasonalFollowUpMonth ?? 4;
+        const seasonalDay = org?.seasonalFollowUpDay ?? 1;
+        const dueDate = getSeasonalFollowUpDate(seasonalMonth, seasonalDay, now, officeDays);
+        await prisma.task.create({
+          data: {
+            contactId: contact.id,
+            userId: contact.assignedToId || contact.createdById,
+            title: generateTaskTitle(contactName, "SEASONAL_FOLLOW_UP"),
+            dueDate,
+            status: "PENDING",
+            taskType: taskTypeToString("SEASONAL_FOLLOW_UP"),
+          },
+        });
+        results.push({ contactId: contact.id, contactName, stage: contact.stage?.name, taskCreated: "SEASONAL_FOLLOW_UP" });
+        continue;
+      }
+
+      // Not-interested contacts get a low-priority FOLLOW_UP task 1 year out
+      if (stageType === "NOT_INTERESTED") {
+        const oneYearOut = new Date(now);
+        oneYearOut.setFullYear(oneYearOut.getFullYear() + 1);
+        const dueDate = enforceOfficeDay(oneYearOut, officeDays);
+        await prisma.task.create({
+          data: {
+            contactId: contact.id,
+            userId: contact.assignedToId || contact.createdById,
+            title: generateTaskTitle(contactName, "FOLLOW_UP"),
+            dueDate,
+            status: "PENDING",
+            taskType: taskTypeToString("FOLLOW_UP"),
+          },
+        });
+        results.push({ contactId: contact.id, contactName, stage: contact.stage?.name, taskCreated: "FOLLOW_UP" });
+        continue;
+      }
+
       const dueDate = enforceOfficeDay(now, officeDays);
       
       // Determine appropriate task type based on stage and contact state
       let taskType: TaskTypeForTitle = "FOLLOW_UP";
       
       if (contact.stage?.name === STAGE_NAMES.NEW_LEAD) {
-        // New leads need first message or follow-up
         taskType = contact.firstMessageSentAt ? "FIRST_MESSAGE_FOLLOW_UP" : "FIRST_MESSAGE";
       } else if (contact.stage?.name === STAGE_NAMES.SCHEDULED_INSPECTION) {
-        // Contacts with scheduled inspection need discuss task
         taskType = "DISCUSS_INSPECTION";
       } else if (contact.stage?.name === STAGE_NAMES.RETAIL_PROSPECT) {
-        // Retail prospects need quote or follow-up
         taskType = contact.quoteSentAt ? "QUOTE_FOLLOW_UP" : "SEND_QUOTE";
       } else if (contact.stage?.name === STAGE_NAMES.CLAIM_PROSPECT) {
-        // Claim prospects need claim rec, PA, or follow-up
         if (contact.paSentAt) {
           taskType = "PA_FOLLOW_UP";
         } else if (contact.claimRecSentAt) {
@@ -1480,16 +1481,12 @@ export async function checkContactsWithoutTasks(organizationId?: string) {
         }
       } else if (contact.stage?.name === STAGE_NAMES.OPEN_CLAIM) {
         taskType = "CLAIM_FOLLOW_UP";
-      } else if (contact.stage?.stageType === "APPROVED") {
-        // Approved jobs need check-ins and invoice follow-ups
+      } else if (stageType === "APPROVED") {
         taskType = "FOLLOW_UP";
       }
       
-      const actionButton = getActionButtonForTaskType(taskType);
-
-      // Build a descriptive title for approved job tasks
       const approvedTaskTitle = (() => {
-        if (contact.stage?.stageType !== "APPROVED") return null;
+        if (stageType !== "APPROVED") return null;
         if (contact.jobStatus === "COMPLETED") return `${contactName} - Invoice Follow Up`;
         if (contact.jobStatus === "IN_PROGRESS") return `${contactName} - Job Check In`;
         return `${contactName} - Approval Check In`;
@@ -1502,9 +1499,7 @@ export async function checkContactsWithoutTasks(organizationId?: string) {
           title: approvedTaskTitle || generateTaskTitle(contactName, taskType),
           dueDate,
           status: "PENDING",
-          taskType: taskType,
-          actionButton: actionButton as ActionButtonType,
-          currentAction: actionButton as ActionButtonType,
+          taskType: taskTypeToString(taskType),
         },
       });
 

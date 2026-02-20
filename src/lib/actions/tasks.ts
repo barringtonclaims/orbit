@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
 import { startOfDay, endOfDay } from "date-fns";
-import { getNextOfficeDay, generateTaskTitle, getActionButtonForTaskType, type TaskTypeForTitle } from "@/lib/scheduling";
+import { getNextOfficeDay, generateTaskTitle, normalizeOfficeDays, type TaskTypeForTitle } from "@/lib/scheduling";
 import { Prisma } from "@prisma/client";
 
 export type TaskWithContact = Prisma.TaskGetPayload<{
@@ -101,7 +101,7 @@ export async function getTasks(options?: {
     }
 
     if (options?.taskType) {
-      where.taskType = options.taskType as Prisma.EnumTaskTypeFilter["equals"];
+      where.taskType = options.taskType;
     }
 
     // Active views exclude terminal stages (seasonal, not interested, approved)
@@ -285,10 +285,11 @@ export async function getTaskStats() {
 }
 
 export async function completeTask(taskId: string, options?: {
-  reschedule?: boolean; // Whether to auto-reschedule to next office day
-  nextTaskType?: TaskTypeForTitle; // Specific task type for next task
-  customTitle?: string; // Override the auto-generated task title
+  reschedule?: boolean;
+  nextTaskType?: TaskTypeForTitle;
+  customTitle?: string;
   notes?: string;
+  dueDate?: Date;
 }) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -338,23 +339,22 @@ export async function completeTask(taskId: string, options?: {
         orderBy: { joinedAt: "asc" },
       });
     }
-    const rawOfficeDays = membership?.organization?.officeDays;
-    const officeDays = Array.isArray(rawOfficeDays) && rawOfficeDays.length > 0 ? rawOfficeDays : [1, 3, 5];
+    const officeDays = normalizeOfficeDays(membership?.organization?.officeDays);
     const contactName = `${task.contact.firstName} ${task.contact.lastName}`;
 
     // Handle explicit reschedule or next task creation
     if (options?.reschedule || options?.nextTaskType || options?.customTitle) {
-      const nextDate = getNextOfficeDay(new Date(), officeDays);
-      const nextTaskType = options?.nextTaskType || task.taskType as TaskTypeForTitle;
-      const actionButton = getActionButtonForTaskType(nextTaskType);
-      
+      const nextDate = options?.dueDate ?? getNextOfficeDay(new Date(), officeDays);
+      const nextTaskType = options?.nextTaskType || (task.taskType as TaskTypeForTitle);
+      const taskTypeStr = toHumanReadableTaskType(nextTaskType);
+
       // Use custom title if provided, otherwise auto-generate
-      const title = options?.customTitle 
+      const title = options?.customTitle
         ? `${contactName} - ${options.customTitle}`
         : generateTaskTitle(contactName, nextTaskType, {
             quoteType: task.contact.quoteType || undefined,
           });
-      
+
       await prisma.task.create({
         data: {
           contactId: task.contactId,
@@ -362,9 +362,7 @@ export async function completeTask(taskId: string, options?: {
           title,
           dueDate: nextDate,
           status: "PENDING",
-          taskType: nextTaskType,
-          actionButton: actionButton as ActionButtonType,
-          currentAction: actionButton as ActionButtonType,
+          taskType: taskTypeStr,
         },
       });
     }
@@ -397,7 +395,6 @@ export async function completeTask(taskId: string, options?: {
           fallbackTitle = `${contactName} - Seasonal Follow Up`;
         }
 
-        const actionButton = getActionButtonForTaskType(fallbackType);
         await prisma.task.create({
           data: {
             contactId: task.contactId,
@@ -405,9 +402,7 @@ export async function completeTask(taskId: string, options?: {
             title: fallbackTitle,
             dueDate: nextDate,
             status: "PENDING",
-            taskType: fallbackType,
-            actionButton: actionButton as ActionButtonType,
-            currentAction: actionButton as ActionButtonType,
+            taskType: toHumanReadableTaskType(fallbackType),
           },
         });
       }
@@ -424,8 +419,29 @@ export async function completeTask(taskId: string, options?: {
   }
 }
 
-// Type for all action buttons
-type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
+/** Convert TaskTypeForTitle (enum-style) to human-readable string for DB storage */
+function toHumanReadableTaskType(t: TaskTypeForTitle | string): string {
+  const mapping: Record<string, string> = {
+    FOLLOW_UP: "Follow Up",
+    CUSTOM: "Custom",
+    FIRST_MESSAGE: "First Message",
+    FIRST_MESSAGE_FOLLOW_UP: "First Message Follow Up",
+    SET_APPOINTMENT: "Schedule Inspection",
+    APPOINTMENT: "Appointment",
+    APPOINTMENT_REMINDER: "Appointment Reminder",
+    DISCUSS_INSPECTION: "Discuss Inspection",
+    ASSIGN_STATUS: "Assign Status",
+    SEND_QUOTE: "Send Quote",
+    QUOTE_FOLLOW_UP: "Quote Follow Up",
+    CLAIM_RECOMMENDATION: "Claim Recommendation",
+    CLAIM_REC_FOLLOW_UP: "Claim Rec Follow Up",
+    PA_AGREEMENT: "PA Agreement",
+    PA_FOLLOW_UP: "PA Follow Up",
+    CLAIM_FOLLOW_UP: "Claim Follow Up",
+    SEASONAL_FOLLOW_UP: "Seasonal Follow Up",
+  };
+  return mapping[t] ?? (typeof t === "string" ? t.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Custom");
+}
 
 /**
  * Update quick notes on a task (auto-save from UI)
@@ -452,7 +468,6 @@ export async function updateTask(
     title?: string; 
     description?: string; 
     dueDate?: Date;
-    appointmentTime?: Date;
   }
 ) {
   const supabase = await createClient();
@@ -496,8 +511,6 @@ export async function rescheduleTask(taskId: string, newDate: Date) {
       where: { id: taskId },
       data: {
         dueDate: newDate,
-        // Also update appointment time if this is an appointment task
-        appointmentTime: undefined, // Will be set separately if needed
       },
       include: {
         contact: true,
@@ -559,9 +572,8 @@ export async function rescheduleTaskByOfficeDays(taskId: string, officeDaysToSki
       });
     }
     
-    const rawDays = membership?.organization?.officeDays;
-    const officeDays = Array.isArray(rawDays) && rawDays.length > 0 ? rawDays : [1, 3, 5];
-    
+    const officeDays = normalizeOfficeDays(membership?.organization?.officeDays);
+
     // Calculate the new date using office day logic
     const { getNthOfficeDay } = await import("@/lib/scheduling");
     const newDate = getNthOfficeDay(officeDaysToSkip, new Date(), officeDays);
@@ -604,7 +616,6 @@ export async function createTask(input: {
   description?: string;
   dueDate: Date;
   taskType?: TaskTypeForTitle;
-  appointmentTime?: Date;
 }) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -615,7 +626,7 @@ export async function createTask(input: {
 
   try {
     const taskType = input.taskType || "CUSTOM";
-    const actionButton = getActionButtonForTaskType(taskType);
+    const taskTypeStr = toHumanReadableTaskType(taskType);
     
     const task = await prisma.task.create({
       data: {
@@ -625,10 +636,7 @@ export async function createTask(input: {
         description: input.description,
         dueDate: input.dueDate,
         status: "PENDING",
-        taskType: taskType,
-        actionButton: actionButton as ActionButtonType,
-        currentAction: actionButton as ActionButtonType,
-        appointmentTime: input.appointmentTime,
+        taskType: taskTypeStr,
       },
     });
 
@@ -700,14 +708,14 @@ export async function getAppointments(options?: {
   try {
     const where: Prisma.TaskWhereInput = {
       userId: user.id,
-      taskType: "APPOINTMENT",
+      taskType: "Appointment",
       status: { in: ["PENDING", "IN_PROGRESS"] },
     };
 
     if (options?.startDate || options?.endDate) {
-      where.appointmentTime = {};
-      if (options.startDate) (where.appointmentTime as Prisma.DateTimeNullableFilter).gte = options.startDate;
-      if (options.endDate) (where.appointmentTime as Prisma.DateTimeNullableFilter).lte = options.endDate;
+      where.dueDate = {};
+      if (options.startDate) (where.dueDate as Prisma.DateTimeFilter).gte = options.startDate;
+      if (options.endDate) (where.dueDate as Prisma.DateTimeFilter).lte = options.endDate;
     }
 
     const appointments = await prisma.task.findMany({
@@ -732,7 +740,7 @@ export async function getAppointments(options?: {
           },
         },
       },
-      orderBy: { appointmentTime: "asc" },
+      orderBy: { dueDate: "asc" },
     });
 
     return { data: appointments };
@@ -816,16 +824,32 @@ export async function rescheduleTasksBatch(taskIds: string[], officeDaysToSkip: 
         orderBy: { joinedAt: "asc" },
       });
     }
-    const rawDays = membership?.organization?.officeDays;
-    const officeDays = Array.isArray(rawDays) && rawDays.length > 0 ? rawDays : [1, 3, 5];
+    const officeDays = normalizeOfficeDays(membership?.organization?.officeDays);
 
     const { getNthOfficeDay } = await import("@/lib/scheduling");
     const newDate = getNthOfficeDay(officeDaysToSkip, new Date(), officeDays);
+
+    const tasks = await prisma.task.findMany({
+      where: { id: { in: taskIds } },
+      select: { contactId: true },
+    });
 
     const result = await prisma.task.updateMany({
       where: { id: { in: taskIds } },
       data: { dueDate: newDate, updatedAt: new Date() },
     });
+
+    const uniqueContactIds = [...new Set(tasks.map((t) => t.contactId))];
+    if (uniqueContactIds.length > 0) {
+      await prisma.note.createMany({
+        data: uniqueContactIds.map((contactId) => ({
+          contactId,
+          userId: user.id,
+          content: `Task rescheduled to ${newDate.toLocaleDateString()} (${officeDaysToSkip} office day${officeDaysToSkip > 1 ? "s" : ""})`,
+          noteType: "SYSTEM" as const,
+        })),
+      });
+    }
 
     revalidatePath("/tasks");
     revalidatePath("/dashboard");
@@ -846,10 +870,27 @@ export async function setTasksDateBatch(taskIds: string[], date: Date) {
   if (authError || !user) return { error: "Unauthorized" };
 
   try {
+    const tasks = await prisma.task.findMany({
+      where: { id: { in: taskIds } },
+      select: { contactId: true },
+    });
+
     const result = await prisma.task.updateMany({
       where: { id: { in: taskIds } },
       data: { dueDate: date, updatedAt: new Date() },
     });
+
+    const uniqueContactIds = [...new Set(tasks.map((t) => t.contactId))];
+    if (uniqueContactIds.length > 0) {
+      await prisma.note.createMany({
+        data: uniqueContactIds.map((contactId) => ({
+          contactId,
+          userId: user.id,
+          content: `Task date set to ${date.toLocaleDateString()}`,
+          noteType: "SYSTEM" as const,
+        })),
+      });
+    }
 
     revalidatePath("/tasks");
     revalidatePath("/dashboard");

@@ -393,9 +393,9 @@ export function FenceView({
       </div>
 
       {/* Main layout */}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-col md:flex-row flex-1 min-h-0">
         {/* Map area */}
-        <div className="flex-1 relative isolate">
+        <div className="flex-1 relative isolate min-h-[50vh] md:min-h-0">
           <FenceMap
             contacts={contacts}
             fences={fences}
@@ -455,7 +455,7 @@ export function FenceView({
         </div>
 
         {/* Right sidebar */}
-        <div className="w-80 border-l bg-background flex flex-col shrink-0">
+        <div className="w-full md:w-80 border-t md:border-t-0 md:border-l bg-background flex flex-col shrink-0 max-h-[40vh] md:max-h-none overflow-y-auto">
           {/* Saved Fences section */}
           <div className="border-b">
             <div className="flex items-center justify-between px-3 py-2">
@@ -568,7 +568,6 @@ export function FenceView({
       <FenceBulkActions
         selectedIds={selectedIds}
         results={results}
-        stages={stages}
         onClearSelection={clearSelection}
         onActionComplete={handleQuickSearch}
       />

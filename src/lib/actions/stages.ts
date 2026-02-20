@@ -4,6 +4,28 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
 import { STAGE_NAMES } from "@/types";
+import { normalizeOfficeDays } from "@/lib/scheduling";
+
+async function resolveOrgId(userId: string): Promise<string> {
+  const dbUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { activeOrganizationId: true },
+  });
+
+  let membership;
+  if (dbUser?.activeOrganizationId) {
+    membership = await prisma.organizationMember.findFirst({
+      where: { userId, organizationId: dbUser.activeOrganizationId },
+    });
+  }
+  if (!membership) {
+    membership = await prisma.organizationMember.findFirst({
+      where: { userId },
+      orderBy: { joinedAt: "asc" },
+    });
+  }
+  return membership?.organizationId || userId;
+}
 
 export async function getLeadStages(organizationId?: string) {
   const supabase = await createClient();
@@ -14,26 +36,7 @@ export async function getLeadStages(organizationId?: string) {
   }
 
   try {
-    // Respect active organization
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { activeOrganizationId: true },
-    });
-
-    let membership;
-    if (dbUser?.activeOrganizationId) {
-      membership = await prisma.organizationMember.findFirst({
-        where: { userId: user.id, organizationId: dbUser.activeOrganizationId },
-      });
-    }
-    if (!membership) {
-      membership = await prisma.organizationMember.findFirst({
-        where: { userId: user.id },
-        orderBy: { joinedAt: "asc" },
-      });
-    }
-
-    const orgId = organizationId || membership?.organizationId || user.id;
+    const orgId = organizationId || (await resolveOrgId(user.id));
 
     let stages = await prisma.leadStage.findMany({
       where: { organizationId: orgId },
@@ -89,7 +92,12 @@ export async function getStageByName(stageName: string, organizationId?: string)
   }
 }
 
-export async function updateContactStage(contactId: string, stageId: string) {
+export async function updateContactStage(
+  contactId: string,
+  stageId: string,
+  dueDateOverride?: Date,
+  taskOverride?: { taskType?: string; customTitle?: string }
+) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   
@@ -116,7 +124,7 @@ export async function updateContactStage(contactId: string, stageId: string) {
       where: { userId: user.id },
       include: { organization: true },
     });
-    const officeDays = membership?.organization?.officeDays || [1, 3, 5];
+    const officeDays = normalizeOfficeDays(membership?.organization?.officeDays);
 
     // Update the contact stage
     const contact = await prisma.contact.update({
@@ -159,81 +167,36 @@ export async function updateContactStage(contactId: string, stageId: string) {
       },
     });
 
-    // Auto-create the appropriate task for the new status
-    const { generateTaskTitle, getActionButtonForTaskType, getNextOfficeDay, getSeasonalFollowUpDate, enforceOfficeDay } = await import("@/lib/scheduling");
+    // Auto-create the appropriate task for the new status using configured task types
+    const { getNextOfficeDay } = await import("@/lib/scheduling");
     const contactName = `${contact.firstName} ${contact.lastName}`;
 
-    type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "SEND_CARRIER_FOLLOW_UP" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
+    // Look up the first task type linked to this stage (by order)
+    const linkedTaskType = await prisma.customTaskType.findFirst({
+      where: { stageId: stage.id },
+      orderBy: { order: "asc" },
+    });
 
-    // Map stage name to task type
-    const stageTaskMap: Record<string, { taskType: string; dueDate: () => Date } | null> = {
-      [STAGE_NAMES.NEW_LEAD]: {
-        taskType: "FIRST_MESSAGE",
-        dueDate: () => enforceOfficeDay(new Date(), officeDays),
-      },
-      [STAGE_NAMES.SCHEDULED_INSPECTION]: {
-        taskType: "SET_APPOINTMENT",
-        dueDate: () => enforceOfficeDay(new Date(), officeDays),
-      },
-      [STAGE_NAMES.RETAIL_PROSPECT]: {
-        taskType: "SEND_QUOTE",
-        dueDate: () => getNextOfficeDay(new Date(), officeDays),
-      },
-      [STAGE_NAMES.CLAIM_PROSPECT]: {
-        taskType: "CLAIM_RECOMMENDATION",
-        dueDate: () => getNextOfficeDay(new Date(), officeDays),
-      },
-      [STAGE_NAMES.OPEN_CLAIM]: {
-        taskType: "CLAIM_FOLLOW_UP",
-        dueDate: () => getNextOfficeDay(new Date(), officeDays),
-      },
-      [STAGE_NAMES.SEASONAL]: {
-        taskType: "SEASONAL_FOLLOW_UP",
-        dueDate: () => getSeasonalFollowUpDate(
-          membership?.organization?.seasonalFollowUpMonth || 4,
-          membership?.organization?.seasonalFollowUpDay || 1,
-          new Date(),
-          officeDays
-        ),
-      },
-      [STAGE_NAMES.APPROVED]: {
-        taskType: "FOLLOW_UP",
-        dueDate: () => getNextOfficeDay(new Date(), officeDays),
-      },
-      [STAGE_NAMES.NOT_INTERESTED]: {
-        taskType: "FOLLOW_UP",
-        dueDate: () => getNextOfficeDay(new Date(), officeDays),
-      },
-    };
+    const resolvedTaskType = taskOverride?.taskType || linkedTaskType?.name || "Follow Up";
+    const dueDays = linkedTaskType?.defaultDueDays;
+    const defaultDueDate = dueDays != null
+      ? (() => { const d = new Date(); d.setDate(d.getDate() + dueDays); return d; })()
+      : getNextOfficeDay(new Date(), officeDays);
 
-    const taskConfig = stageTaskMap[stage.name];
-    if (taskConfig) {
-      const { taskType, dueDate } = taskConfig;
-      const actionButton = getActionButtonForTaskType(taskType as Parameters<typeof getActionButtonForTaskType>[0]);
+    const taskTitle = taskOverride?.customTitle
+      ? `${contactName} - ${taskOverride.customTitle}`
+      : `${contactName} - ${resolvedTaskType}`;
 
-      // Custom titles for terminal stages
-      let taskTitle: string;
-      if (stage.name === STAGE_NAMES.APPROVED) {
-        taskTitle = `${contactName} - Approval Check In`;
-      } else if (stage.name === STAGE_NAMES.NOT_INTERESTED) {
-        taskTitle = `${contactName} - Reactivation Review`;
-      } else {
-        taskTitle = generateTaskTitle(contactName, taskType as Parameters<typeof generateTaskTitle>[1]);
-      }
-
-      await prisma.task.create({
-        data: {
-          contactId,
-          userId: user.id,
-          title: taskTitle,
-          dueDate: dueDate(),
-          status: "PENDING",
-          taskType: taskType as "FIRST_MESSAGE" | "FIRST_MESSAGE_FOLLOW_UP" | "SET_APPOINTMENT" | "DISCUSS_INSPECTION" | "SEND_QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "SEASONAL_FOLLOW_UP" | "FOLLOW_UP" | "CUSTOM",
-          actionButton: actionButton as ActionButtonType,
-          currentAction: actionButton as ActionButtonType,
-        },
-      });
-    }
+    await prisma.task.create({
+      data: {
+        contactId,
+        userId: user.id,
+        title: taskTitle,
+        dueDate: dueDateOverride ?? defaultDueDate,
+        status: "PENDING",
+        taskType: resolvedTaskType,
+      },
+    });
 
     revalidatePath(`/contacts/${contactId}`);
     revalidatePath("/contacts");
@@ -263,11 +226,7 @@ export async function createLeadStage(input: {
   }
 
   try {
-    const membership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
-    });
-
-    const orgId = membership?.organizationId || user.id;
+    const orgId = await resolveOrgId(user.id);
 
     // Get the highest order
     const lastStage = await prisma.leadStage.findFirst({
@@ -293,7 +252,87 @@ export async function createLeadStage(input: {
     return { data: stage };
   } catch (error) {
     console.error("Error creating lead stage:", error);
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code: string }).code === "P2002"
+    ) {
+      return { error: "A stage with that name already exists." };
+    }
     return { error: "Failed to create stage" };
+  }
+}
+
+export async function updateLeadStage(
+  id: string,
+  input: { name?: string; color?: string; description?: string }
+) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Unauthorized" };
+
+  try {
+    const stage = await prisma.leadStage.findUnique({ where: { id } });
+    if (!stage) return { error: "Stage not found" };
+
+    const updated = await prisma.leadStage.update({
+      where: { id },
+      data: {
+        ...(input.name !== undefined && { name: input.name.trim() }),
+        ...(input.color !== undefined && { color: input.color }),
+        ...(input.description !== undefined && { description: input.description?.trim() || null }),
+      },
+    });
+
+    revalidatePath("/settings");
+    return { data: updated };
+  } catch (error) {
+    console.error("Error updating lead stage:", error);
+    return { error: "Failed to update stage" };
+  }
+}
+
+export async function deleteLeadStage(id: string) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Unauthorized" };
+
+  try {
+    const stage = await prisma.leadStage.findUnique({
+      where: { id },
+      include: { _count: { select: { contacts: true } } },
+    });
+    if (!stage) return { error: "Stage not found" };
+    if (stage._count.contacts > 0) {
+      return { error: `Cannot delete: ${stage._count.contacts} contact(s) are in this stage. Move them first.` };
+    }
+
+    await prisma.leadStage.delete({ where: { id } });
+    revalidatePath("/settings");
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting lead stage:", error);
+    return { error: "Failed to delete stage" };
+  }
+}
+
+export async function reorderLeadStages(stageIds: string[]) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Unauthorized" };
+
+  try {
+    await Promise.all(
+      stageIds.map((id, index) =>
+        prisma.leadStage.update({ where: { id }, data: { order: index } })
+      )
+    );
+    revalidatePath("/settings");
+    return { success: true };
+  } catch (error) {
+    console.error("Error reordering stages:", error);
+    return { error: "Failed to reorder stages" };
   }
 }
 

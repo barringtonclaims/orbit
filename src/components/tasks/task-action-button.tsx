@@ -11,12 +11,9 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { TemplateSelector } from "@/components/templates/template-selector";
-import { composeSMSUrl, composeEmailUrl } from "@/lib/messaging";
 import { cn } from "@/lib/utils";
 import {
   Zap,
-  FileText,
   Sparkles,
   Loader2,
   Send,
@@ -56,25 +53,12 @@ export function TaskActionButton({
   className,
 }: TaskActionButtonProps) {
   const [showActionPanel, setShowActionPanel] = useState(false);
-  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [directive, setDirective] = useState("");
   const [isSending, setIsSending] = useState(false);
 
   const handleOpenAction = () => {
     setDirective("");
     setShowActionPanel(true);
-  };
-
-  const handleTemplateSelect = (message: string, type: "sms" | "email", subject?: string) => {
-    if (type === "sms" && contact.phone) {
-      window.location.href = composeSMSUrl(contact.phone, message);
-    } else if (type === "email" && contact.email) {
-      window.location.href = composeEmailUrl(contact.email, subject || "", message);
-    } else {
-      navigator.clipboard.writeText(message);
-      toast.success("Message copied to clipboard");
-    }
-    onActionComplete?.();
   };
 
   const handleSendDirective = async () => {
@@ -99,7 +83,10 @@ export function TaskActionButton({
         throw new Error("Failed to queue directive");
       }
 
-      toast.success("Josh is composing your message...");
+      toast.success("Directive queued — Josh is composing in the background");
+
+      fetch("/api/josh/process-queue", { method: "POST" }).catch(() => {});
+
       setShowActionPanel(false);
       setDirective("");
       onActionComplete?.();
@@ -122,85 +109,42 @@ export function TaskActionButton({
         <span className="hidden sm:inline">Action</span>
       </Button>
 
-      {/* Action Panel */}
       <Dialog open={showActionPanel} onOpenChange={setShowActionPanel}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-amber-500" />
               {contact.firstName} {contact.lastName}
             </DialogTitle>
             <DialogDescription>
-              Choose a template or tell Josh what to do.
+              Tell Josh what to do for this contact.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            {/* Template Option */}
+          <div className="space-y-3">
+            <Textarea
+              placeholder={'e.g. "Text the customer and follow up on the quote" or "Set status to retail prospect and schedule a follow up for Tuesday"'}
+              value={directive}
+              onChange={(e) => setDirective(e.target.value)}
+              rows={3}
+              className="resize-none"
+              autoFocus
+            />
             <Button
-              variant="outline"
-              className="w-full justify-start gap-3 h-auto py-3"
-              onClick={() => {
-                setShowActionPanel(false);
-                setShowTemplateSelector(true);
-              }}
+              onClick={handleSendDirective}
+              disabled={isSending || !directive.trim()}
+              className="w-full gap-2"
             >
-              <FileText className="w-5 h-5 text-primary shrink-0" />
-              <div className="text-left">
-                <p className="font-medium">Use a Template</p>
-                <p className="text-xs text-muted-foreground">Pick from any SMS or email template</p>
-              </div>
+              {isSending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
+              {isSending ? "Sending to Josh..." : "Send to Josh"}
             </Button>
-
-            {/* Josh Directive */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                <p className="text-sm font-medium">Give Josh a Directive</p>
-              </div>
-              <Textarea
-                placeholder={'e.g. "Text the customer and ask if he had any questions about the asphalt quote I sent"'}
-                value={directive}
-                onChange={(e) => setDirective(e.target.value)}
-                rows={3}
-                className="resize-none"
-              />
-              <Button
-                onClick={handleSendDirective}
-                disabled={isSending || !directive.trim()}
-                className="w-full gap-2"
-              >
-                {isSending ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
-                {isSending ? "Sending to Josh..." : "Send to Josh"}
-              </Button>
-            </div>
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Template Selector (all categories) */}
-      <TemplateSelector
-        open={showTemplateSelector}
-        onOpenChange={setShowTemplateSelector}
-        category="ALL"
-        context={{
-          contact: {
-            firstName: contact.firstName,
-            lastName: contact.lastName,
-            email: contact.email,
-            phone: contact.phone,
-            address: contact.address,
-            carrier: contact.carrier,
-            quoteType: contact.quoteType,
-          },
-        }}
-        preferredType={contact.phone ? "sms" : "email"}
-        title={`Template - ${contact.firstName} ${contact.lastName}`}
-        onSelect={handleTemplateSelect}
-      />
     </>
   );
 }
@@ -246,7 +190,10 @@ export function JoshAIButton({
 
       if (!res.ok) throw new Error("Failed");
 
-      toast.success("Josh is composing your message...");
+      toast.success("Directive queued — Josh is composing in the background");
+
+      fetch("/api/josh/process-queue", { method: "POST" }).catch(() => {});
+
       setShowDirective(false);
       setDirective("");
     } catch {

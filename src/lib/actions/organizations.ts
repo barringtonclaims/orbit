@@ -543,3 +543,86 @@ async function createDefaultStages(organizationId: string) {
   }
 }
 
+export async function getUserProfile() {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Unauthorized", data: null };
+
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { id: true, fullName: true, email: true, activeOrganizationId: true },
+  });
+
+  let orgName: string | null = null;
+  if (dbUser) {
+    let membership;
+    if (dbUser.activeOrganizationId) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id, organizationId: dbUser.activeOrganizationId },
+        include: { organization: { select: { id: true, name: true } } },
+      });
+    }
+    if (!membership) {
+      membership = await prisma.organizationMember.findFirst({
+        where: { userId: user.id },
+        include: { organization: { select: { id: true, name: true } } },
+        orderBy: { joinedAt: "asc" },
+      });
+    }
+    orgName = membership?.organization.name ?? null;
+  }
+
+  return {
+    data: {
+      fullName: dbUser?.fullName || "",
+      email: dbUser?.email || user.email || "",
+      companyName: orgName || "",
+    },
+  };
+}
+
+export async function updateUserProfile(input: {
+  fullName: string;
+  companyName?: string;
+}) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Unauthorized" };
+
+  try {
+    const dbUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { fullName: input.fullName.trim() },
+      select: { activeOrganizationId: true },
+    });
+
+    if (input.companyName !== undefined) {
+      let membership;
+      if (dbUser.activeOrganizationId) {
+        membership = await prisma.organizationMember.findFirst({
+          where: { userId: user.id, organizationId: dbUser.activeOrganizationId },
+        });
+      }
+      if (!membership) {
+        membership = await prisma.organizationMember.findFirst({
+          where: { userId: user.id },
+          orderBy: { joinedAt: "asc" },
+        });
+      }
+      if (membership) {
+        await prisma.organization.update({
+          where: { id: membership.organizationId },
+          data: { name: input.companyName.trim() },
+        });
+      }
+    }
+
+    revalidatePath("/settings");
+    revalidatePath("/dashboard");
+    return { success: true };
+  } catch (error) {
+    console.error("Error updating profile:", error);
+    return { error: "Failed to update profile" };
+  }
+}
+

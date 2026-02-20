@@ -22,6 +22,28 @@ export interface CurrentOrganization {
 }
 
 /**
+ * Get the active organization ID for a given user.
+ * Useful in API routes where the userId is already known from Supabase auth.
+ */
+export async function getActiveOrgId(userId: string): Promise<string | null> {
+  const dbUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { activeOrganizationId: true },
+  });
+  if (dbUser?.activeOrganizationId) {
+    const m = await prisma.organizationMember.findFirst({
+      where: { userId, organizationId: dbUser.activeOrganizationId },
+    });
+    if (m) return m.organizationId;
+  }
+  const m = await prisma.organizationMember.findFirst({
+    where: { userId },
+    orderBy: { joinedAt: "asc" },
+  });
+  return m?.organizationId ?? null;
+}
+
+/**
  * Get the currently authenticated user
  */
 export async function getCurrentUser(): Promise<CurrentUser | null> {

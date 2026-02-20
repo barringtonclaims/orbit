@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { createTemplate, updateTemplate, deleteTemplate } from "@/lib/actions/templates";
-import { TEMPLATE_VARIABLES, getSuggestedVariables } from "@/lib/templates";
+import { TEMPLATE_VARIABLES } from "@/lib/templates";
 import type { MessageTemplate } from "@prisma/client";
 import { 
   FileText, 
@@ -49,48 +49,42 @@ import {
   Loader2,
 } from "lucide-react";
 
-interface TemplateSettingsProps {
-  templates: MessageTemplate[];
+interface TaskTypeOption {
+  id: string;
+  name: string;
+  stageId: string | null;
+  stage?: { id: string; name: string; color: string } | null;
 }
 
-const TEMPLATE_CATEGORIES = [
-  { value: "FIRST_MESSAGE", label: "First Message", stage: "New Lead" },
-  { value: "FIRST_MESSAGE_FOLLOW_UP", label: "First Message Follow Up", stage: "New Lead" },
-  { value: "APPOINTMENT_REMINDER", label: "Appointment Reminder", stage: "Scheduled Inspection" },
-  { value: "QUOTE", label: "Quote", stage: "Retail Prospect" },
-  { value: "QUOTE_FOLLOW_UP", label: "Quote Follow Up", stage: "Retail Prospect" },
-  { value: "CLAIM_RECOMMENDATION", label: "Claim Recommendation", stage: "Claim Prospect" },
-  { value: "CLAIM_REC_FOLLOW_UP", label: "Claim Rec Follow Up", stage: "Claim Prospect" },
-  { value: "PA_AGREEMENT", label: "PA Agreement", stage: "Claim Prospect" },
-  { value: "PA_FOLLOW_UP", label: "PA Agreement Follow Up", stage: "Claim Prospect" },
-  { value: "CLAIM_FOLLOW_UP", label: "Claim Follow Up", stage: "Open Claim" },
-  { value: "CARRIER_FOLLOW_UP", label: "Carrier Follow Up", stage: "Open Claim" },
-  { value: "SEASONAL", label: "Seasonal Follow Up", stage: "Seasonal" },
-  { value: "GENERAL", label: "General", stage: "" },
+interface TemplateSettingsProps {
+  templates: MessageTemplate[];
+  taskTypes: TaskTypeOption[];
+}
+
+const ALL_VARIABLES: (keyof typeof TEMPLATE_VARIABLES)[] = [
+  "first_name", "last_name", "full_name", "address", "city", "state",
+  "carrier", "claim_number", "policy_number", "date_of_loss", "quote_type",
+  "user_name", "user_email", "user_phone", "today", "appointment_date",
 ];
 
-export function TemplateSettings({ templates }: TemplateSettingsProps) {
+export function TemplateSettings({ templates, taskTypes }: TemplateSettingsProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<MessageTemplate | null>(null);
   const [deletingTemplate, setDeletingTemplate] = useState<MessageTemplate | null>(null);
-  const [filterCategory, setFilterCategory] = useState<string>("all");
+  const [filterTaskType, setFilterTaskType] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
   
-  // Ref for textarea to track cursor position
   const bodyTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  type TemplateCategory = "FIRST_MESSAGE" | "FIRST_MESSAGE_FOLLOW_UP" | "APPOINTMENT_REMINDER" | "QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "CARRIER_FOLLOW_UP" | "SEASONAL" | "GENERAL";
-  
-  // Form state
   const [formData, setFormData] = useState({
     name: "",
     subject: "",
     body: "",
     templateType: "SMS" as "SMS" | "EMAIL",
-    category: "GENERAL" as TemplateCategory,
+    taskTypeName: "General",
     isDefault: false,
   });
 
@@ -100,7 +94,7 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
       subject: "",
       body: "",
       templateType: "SMS",
-      category: "GENERAL",
+      taskTypeName: "General",
       isDefault: false,
     });
   };
@@ -118,7 +112,7 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
       subject: template.subject || "",
       body: template.body,
       templateType: template.templateType as "SMS" | "EMAIL",
-      category: template.category as TemplateCategory,
+      taskTypeName: template.taskTypeName || "General",
       isDefault: template.isDefault,
     });
     setShowCreateDialog(true);
@@ -132,19 +126,27 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
 
     setIsLoading(true);
     try {
+      const isGeneral = formData.taskTypeName === "General";
+      const linkedType = taskTypes.find((t) => t.name === formData.taskTypeName);
+
+      const payload = {
+        name: formData.name,
+        subject: formData.subject,
+        body: formData.body,
+        templateType: formData.templateType,
+        category: isGeneral ? "General" : formData.taskTypeName,
+        taskTypeName: isGeneral ? null : formData.taskTypeName,
+        stageName: isGeneral ? null : (linkedType?.stage?.name || null),
+        isDefault: formData.isDefault,
+      };
+
       if (editingTemplate) {
-        const result = await updateTemplate(editingTemplate.id, formData);
-        if (result.error) {
-          toast.error(result.error);
-          return;
-        }
+        const result = await updateTemplate(editingTemplate.id, payload);
+        if (result.error) { toast.error(result.error); return; }
         toast.success("Template updated");
       } else {
-        const result = await createTemplate(formData);
-        if (result.error) {
-          toast.error(result.error);
-          return;
-        }
+        const result = await createTemplate(payload);
+        if (result.error) { toast.error(result.error); return; }
         toast.success("Template created");
       }
       
@@ -164,10 +166,7 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
     setIsLoading(true);
     try {
       const result = await deleteTemplate(deletingTemplate.id);
-      if (result.error) {
-        toast.error(result.error);
-        return;
-      }
+      if (result.error) { toast.error(result.error); return; }
       toast.success("Template deleted");
       setShowDeleteDialog(false);
       setDeletingTemplate(null);
@@ -187,46 +186,43 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
       const currentBody = formData.body;
-      
-      // Insert at cursor position (or replace selected text)
       const newBody = currentBody.substring(0, start) + variableText + currentBody.substring(end);
       
-      setFormData(prev => ({
-        ...prev,
-        body: newBody,
-      }));
+      setFormData(prev => ({ ...prev, body: newBody }));
       
-      // Set cursor position after the inserted variable (after state update)
       setTimeout(() => {
         textarea.focus();
         const newPosition = start + variableText.length;
         textarea.setSelectionRange(newPosition, newPosition);
       }, 0);
     } else {
-      // Fallback: append to end
-      setFormData(prev => ({
-        ...prev,
-        body: prev.body + variableText,
-      }));
+      setFormData(prev => ({ ...prev, body: prev.body + variableText }));
     }
   };
 
-  // Filter templates
+  const getTemplateGroup = (template: MessageTemplate): string => {
+    return template.taskTypeName || "General";
+  };
+
   const filteredTemplates = templates.filter(t => {
-    if (filterCategory !== "all" && t.category !== filterCategory) return false;
+    const group = getTemplateGroup(t);
+    if (filterTaskType !== "all" && group !== filterTaskType) return false;
     if (filterType !== "all" && t.templateType !== filterType) return false;
     return true;
   });
 
-  // Group by category
   const groupedTemplates = filteredTemplates.reduce((acc, template) => {
-    const cat = template.category;
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(template);
+    const group = getTemplateGroup(template);
+    if (!acc[group]) acc[group] = [];
+    acc[group].push(template);
     return acc;
   }, {} as Record<string, MessageTemplate[]>);
 
-  const suggestedVars = getSuggestedVariables(formData.category);
+  const getTaskTypeColor = (taskTypeName: string): string => {
+    if (taskTypeName === "General") return "#6b7280";
+    const tt = taskTypes.find((t) => t.name === taskTypeName);
+    return tt?.stage?.color || "#6b7280";
+  };
 
   return (
     <>
@@ -239,7 +235,7 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
                 Message Templates
               </CardTitle>
               <CardDescription>
-                Create and manage templates for SMS and email messages
+                Create templates linked to task types. Josh AI uses these to match your voice when composing messages.
               </CardDescription>
             </div>
             <Button onClick={handleOpenCreate} className="gap-2">
@@ -251,15 +247,22 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
         <CardContent className="space-y-4">
           {/* Filters */}
           <div className="flex gap-4">
-            <Select value={filterCategory} onValueChange={setFilterCategory}>
+            <Select value={filterTaskType} onValueChange={setFilterTaskType}>
               <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="All Categories" />
+                <SelectValue placeholder="All Task Types" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Categories</SelectItem>
-                {TEMPLATE_CATEGORIES.map(cat => (
-                  <SelectItem key={cat.value} value={cat.value}>
-                    {cat.label}
+                <SelectItem value="all">All Task Types</SelectItem>
+                <SelectItem value="General">General</SelectItem>
+                {taskTypes.map(tt => (
+                  <SelectItem key={tt.id} value={tt.name}>
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: tt.stage?.color || "#6b7280" }}
+                      />
+                      {tt.name}
+                    </div>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -287,13 +290,28 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
             </div>
           ) : (
             <div className="space-y-6">
-              {Object.entries(groupedTemplates).map(([category, categoryTemplates]) => (
-                <div key={category}>
-                  <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                    {TEMPLATE_CATEGORIES.find(c => c.value === category)?.label || category}
+              {Object.entries(groupedTemplates).map(([groupName, groupTemplates]) => (
+                <div key={groupName}>
+                  <h3 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
+                    <div
+                      className="w-2.5 h-2.5 rounded-full"
+                      style={{ backgroundColor: getTaskTypeColor(groupName) }}
+                    />
+                    {groupName}
+                    {groupName !== "General" && (() => {
+                      const tt = taskTypes.find(t => t.name === groupName);
+                      if (tt?.stage) {
+                        return (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 ml-1" style={{ borderColor: tt.stage.color, color: tt.stage.color }}>
+                            {tt.stage.name}
+                          </Badge>
+                        );
+                      }
+                      return null;
+                    })()}
                   </h3>
                   <div className="space-y-2">
-                    {categoryTemplates.map(template => (
+                    {groupTemplates.map(template => (
                       <div
                         key={template.id}
                         className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
@@ -320,11 +338,7 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
                           <Badge variant="outline" className="hidden sm:flex">
                             {template.templateType}
                           </Badge>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleOpenEdit(template)}
-                          >
+                          <Button variant="ghost" size="icon" onClick={() => handleOpenEdit(template)}>
                             <Edit2 className="w-4 h-4" />
                           </Button>
                           <Button
@@ -358,7 +372,7 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
             <DialogDescription>
               {editingTemplate 
                 ? "Update the template details below" 
-                : "Create a new message template"}
+                : "Create a new message template. Link it to a task type so Josh AI knows when to use it."}
             </DialogDescription>
           </DialogHeader>
 
@@ -391,18 +405,36 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
               </div>
 
               <div className="space-y-2">
-                <Label>Category *</Label>
+                <Label>Link to Task Type</Label>
+                <p className="text-xs text-muted-foreground">
+                  Josh AI uses this template when composing messages for this task type.
+                </p>
                 <Select
-                  value={formData.category}
-                  onValueChange={(v: TemplateCategory) => setFormData(prev => ({ ...prev, category: v }))}
+                  value={formData.taskTypeName}
+                  onValueChange={(v) => setFormData(prev => ({ ...prev, taskTypeName: v }))}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {TEMPLATE_CATEGORIES.map(cat => (
-                      <SelectItem key={cat.value} value={cat.value}>
-                        {cat.label}
+                    <SelectItem value="General">
+                      <span className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full inline-block shrink-0 bg-gray-400" />
+                        General (All Task Types)
+                      </span>
+                    </SelectItem>
+                    {taskTypes.map(tt => (
+                      <SelectItem key={tt.id} value={tt.name}>
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="w-2 h-2 rounded-full inline-block shrink-0"
+                            style={{ backgroundColor: tt.stage?.color || "#6b7280" }}
+                          />
+                          {tt.name}
+                          {tt.stage && (
+                            <span className="text-muted-foreground text-xs">({tt.stage.name})</span>
+                          )}
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -438,34 +470,29 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
                     Insert Variables
                   </Label>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Click a variable to insert it at your cursor position. Variables use <code className="bg-muted px-1 rounded">{"{{variable}}"}</code> syntax.
+                    Click a variable to insert it at your cursor position.
                   </p>
                 </div>
                 
-                {/* Suggested Variables for this category */}
-                <div>
-                  <p className="text-xs font-medium mb-2 text-muted-foreground">Suggested for this category:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {suggestedVars.map(v => (
-                      <Button
-                        key={v}
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="h-7 text-xs font-mono"
-                        onClick={() => insertVariable(v)}
-                        title={TEMPLATE_VARIABLES[v]}
-                      >
-                        {`{{${v}}}`}
-                      </Button>
-                    ))}
-                  </div>
+                <div className="flex flex-wrap gap-2">
+                  {ALL_VARIABLES.map(v => (
+                    <Button
+                      key={v}
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 text-xs font-mono"
+                      onClick={() => insertVariable(v)}
+                      title={TEMPLATE_VARIABLES[v]}
+                    >
+                      {`{{${v}}}`}
+                    </Button>
+                  ))}
                 </div>
 
-                {/* All Variables Table */}
                 <details className="group">
                   <summary className="cursor-pointer text-sm font-medium text-primary hover:underline">
-                    View all available variables →
+                    View all available variables
                   </summary>
                   <div className="mt-3 border rounded-md overflow-hidden">
                     <table className="w-full text-xs">
@@ -513,7 +540,7 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
                   className="rounded"
                 />
                 <Label htmlFor="isDefault" className="text-sm">
-                  Set as default template for this category
+                  Set as default template for this task type
                 </Label>
               </div>
             </div>
@@ -560,4 +587,3 @@ export function TemplateSettings({ templates }: TemplateSettingsProps) {
     </>
   );
 }
-

@@ -3,524 +3,207 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
-import { format } from "date-fns";
-import { getNextOfficeDay, generateTaskTitle, getActionButtonForTaskType, getSpringReminderDate } from "@/lib/scheduling";
-import { autoSyncAppointmentToCalendar } from "@/lib/actions/calendar";
-import { STAGE_NAMES } from "@/types";
+import { startOfMonth, endOfMonth } from "date-fns";
 
-// Type for all action buttons
-type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
-
-export async function scheduleAppointment(input: {
+export interface CreateAppointmentInput {
   contactId: string;
-  appointmentDate: Date;
-  appointmentTime?: string;
-  notes?: string;
-}) {
+  type: string;
+  startTime: Date;
+  endTime?: Date;
+  location?: string;
+  description?: string;
+}
+
+export async function createAppointment(input: CreateAppointmentInput) {
   const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  
-  if (authError || !user) {
-    return { error: "Unauthorized" };
-  }
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) return { error: "Unauthorized" };
 
   try {
     const contact = await prisma.contact.findUnique({
       where: { id: input.contactId },
-      include: { stage: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        address: true,
+        city: true,
+        state: true,
+      },
     });
 
-    if (!contact) {
-      return { error: "Contact not found" };
-    }
+    if (!contact) return { error: "Contact not found" };
 
     const contactName = `${contact.firstName} ${contact.lastName}`;
-    
-    // Parse the appointment time if provided
-    let appointmentDateTime = new Date(input.appointmentDate);
-    if (input.appointmentTime) {
-      const [hours, minutes] = input.appointmentTime.split(":").map(Number);
-      appointmentDateTime.setHours(hours, minutes, 0, 0);
+    const title = `${contactName} - ${input.type}`;
+
+    let location = input.location ?? null;
+    if (!location && input.type !== "Phone Call Only") {
+      const parts = [contact.address, contact.city, contact.state].filter(Boolean);
+      if (parts.length > 0) location = parts.join(", ");
     }
 
-    const formattedDate = format(appointmentDateTime, "EEE, MMM d 'at' h:mm a");
-
-    // Cancel any existing pending tasks for this contact
-    await prisma.task.updateMany({
-      where: {
-        contactId: input.contactId,
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-      },
-      data: {
-        status: "CANCELLED",
-      },
-    });
-
-    // Get action button
-    const actionButton = getActionButtonForTaskType("APPOINTMENT");
-
-    // Create the appointment task
-    const task = await prisma.task.create({
+    const appointment = await prisma.appointment.create({
       data: {
         contactId: input.contactId,
         userId: user.id,
-        title: `${contactName} - Inspection: ${formattedDate}`,
-        description: input.notes,
-        dueDate: appointmentDateTime,
-        appointmentTime: appointmentDateTime,
-        status: "PENDING",
-        taskType: "APPOINTMENT",
-        actionButton: actionButton as ActionButtonType,
-        currentAction: actionButton as ActionButtonType,
+        title,
+        type: input.type,
+        startTime: input.startTime,
+        endTime: input.endTime ?? null,
+        location,
+        description: input.description ?? null,
       },
     });
 
-    // Update contact stage to "Scheduled Inspection"
-    const inspectionStage = await prisma.leadStage.findFirst({
-      where: {
-        organizationId: contact.organizationId,
-        name: STAGE_NAMES.SCHEDULED_INSPECTION,
-      },
-    });
-
-    if (inspectionStage && contact.stageId !== inspectionStage.id) {
-      await prisma.contact.update({
-        where: { id: input.contactId },
-        data: {
-          stageId: inspectionStage.id,
-          stageOrder: inspectionStage.order,
-          updatedAt: new Date(),
-        },
-      });
-
-      // Add stage change note
-      await prisma.note.create({
-        data: {
-          contactId: input.contactId,
-          userId: user.id,
-          content: `Stage changed to "${STAGE_NAMES.SCHEDULED_INSPECTION}"`,
-          noteType: "STAGE_CHANGE",
-        },
-      });
-    }
-
-    // Add timeline entry
     await prisma.note.create({
       data: {
         contactId: input.contactId,
         userId: user.id,
-        content: `Inspection scheduled for ${formattedDate}${input.notes ? `\n\nNotes: ${input.notes}` : ""}`,
+        content: `Scheduled ${input.type}: ${input.startTime.toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}${input.description ? ` — ${input.description}` : ""}`,
         noteType: "APPOINTMENT_SCHEDULED",
-        metadata: {
-          appointmentDate: appointmentDateTime.toISOString(),
-        },
       },
     });
 
-    // Sync to Google Calendar if connected
-    await autoSyncAppointmentToCalendar(user.id, task.id);
-
-    revalidatePath(`/contacts/${input.contactId}`);
-    revalidatePath("/contacts");
-    revalidatePath("/tasks");
-    revalidatePath("/dashboard");
     revalidatePath("/calendar");
+    revalidatePath(`/contacts/${input.contactId}`);
+    revalidatePath("/tasks");
 
-    return { data: task };
+    return { data: appointment };
   } catch (error) {
-    console.error("Error scheduling appointment:", error);
-    return { error: "Failed to schedule appointment" };
+    console.error("Error creating appointment:", error);
+    return { error: "Failed to create appointment" };
   }
 }
 
-export async function completeAppointment(taskId: string, outcome: {
-  nextAction: "SEND_QUOTE" | "CLAIM_RECOMMENDATION" | "FOLLOW_UP" | "NOT_INTERESTED" | "NONE";
-  notes?: string;
-  quoteType?: string;
-  carrier?: string;
-  dateOfLoss?: Date;
-}) {
+export async function updateAppointment(
+  id: string,
+  input: Partial<Omit<CreateAppointmentInput, "contactId">>
+) {
   const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  
-  if (authError || !user) {
-    return { error: "Unauthorized" };
-  }
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) return { error: "Unauthorized" };
 
   try {
-    // Get org settings for office days
-    const membership = await prisma.organizationMember.findFirst({
-      where: { userId: user.id },
-      include: { organization: true },
-    });
-    const officeDays = membership?.organization.officeDays || [1, 3, 5];
+    const existing = await prisma.appointment.findUnique({ where: { id } });
+    if (!existing || existing.userId !== user.id) {
+      return { error: "Appointment not found" };
+    }
 
-    const task = await prisma.task.update({
-      where: { id: taskId },
+    const appointment = await prisma.appointment.update({
+      where: { id },
       data: {
-        status: "COMPLETED",
-        completedAt: new Date(),
+        ...(input.type !== undefined && { type: input.type }),
+        ...(input.startTime !== undefined && { startTime: input.startTime }),
+        ...(input.endTime !== undefined && { endTime: input.endTime }),
+        ...(input.location !== undefined && { location: input.location }),
+        ...(input.description !== undefined && { description: input.description }),
+      },
+    });
+
+    await prisma.note.create({
+      data: {
+        contactId: existing.contactId,
+        userId: user.id,
+        content: `Updated appointment: ${appointment.type} on ${appointment.startTime.toLocaleDateString()}`,
+        noteType: "SYSTEM",
+      },
+    });
+
+    revalidatePath("/calendar");
+    revalidatePath(`/contacts/${existing.contactId}`);
+
+    return { data: appointment };
+  } catch (error) {
+    console.error("Error updating appointment:", error);
+    return { error: "Failed to update appointment" };
+  }
+}
+
+export async function deleteAppointment(id: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) return { error: "Unauthorized" };
+
+  try {
+    const existing = await prisma.appointment.findUnique({ where: { id } });
+    if (!existing || existing.userId !== user.id) {
+      return { error: "Appointment not found" };
+    }
+
+    await prisma.appointment.delete({ where: { id } });
+
+    await prisma.note.create({
+      data: {
+        contactId: existing.contactId,
+        userId: user.id,
+        content: `Cancelled ${existing.type} appointment on ${existing.startTime.toLocaleDateString()}`,
+        noteType: "SYSTEM",
+      },
+    });
+
+    revalidatePath("/calendar");
+    revalidatePath(`/contacts/${existing.contactId}`);
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting appointment:", error);
+    return { error: "Failed to delete appointment" };
+  }
+}
+
+export async function getAppointments(month?: Date) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) return { error: "Unauthorized", data: [] };
+
+  try {
+    const currentMonth = month || new Date();
+    const start = startOfMonth(currentMonth);
+    const end = endOfMonth(currentMonth);
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        userId: user.id,
+        startTime: { gte: start, lte: end },
       },
       include: {
         contact: {
-          include: { stage: true },
-        },
-      },
-    });
-
-    const contactName = `${task.contact.firstName} ${task.contact.lastName}`;
-
-    // Add completion note
-    if (outcome.notes) {
-      await prisma.note.create({
-        data: {
-          contactId: task.contactId,
-          userId: user.id,
-          content: `Inspection completed.\n\nNotes: ${outcome.notes}`,
-          noteType: "APPOINTMENT_COMPLETED",
-        },
-      });
-    }
-
-    // Create next task based on outcome
-    if (outcome.nextAction !== "NONE" && outcome.nextAction !== "NOT_INTERESTED") {
-      const nextMWF = getNextOfficeDay(new Date(), officeDays);
-      
-      let newStageName: string | null = null;
-      let taskTitle = "";
-      let taskType = outcome.nextAction;
-      const actionButton = getActionButtonForTaskType(outcome.nextAction);
-
-      // Determine stage and task based on action
-      switch (outcome.nextAction) {
-        case "SEND_QUOTE":
-          newStageName = STAGE_NAMES.RETAIL_PROSPECT;
-          taskTitle = generateTaskTitle(contactName, "SEND_QUOTE", { quoteType: outcome.quoteType });
-          // Update contact with quote type
-          if (outcome.quoteType) {
-            await prisma.contact.update({
-              where: { id: task.contactId },
-              data: { quoteType: outcome.quoteType },
-            });
-          }
-          break;
-        case "CLAIM_RECOMMENDATION":
-          newStageName = STAGE_NAMES.CLAIM_PROSPECT;
-          taskTitle = generateTaskTitle(contactName, "CLAIM_RECOMMENDATION");
-          // Update contact with claim info
-          if (outcome.carrier || outcome.dateOfLoss) {
-            await prisma.contact.update({
-              where: { id: task.contactId },
-              data: { 
-                carrier: outcome.carrier,
-                dateOfLoss: outcome.dateOfLoss,
-              },
-            });
-          }
-          break;
-        case "FOLLOW_UP":
-          taskTitle = generateTaskTitle(contactName, "FOLLOW_UP");
-          break;
-      }
-
-      await prisma.task.create({
-        data: {
-          contactId: task.contactId,
-          userId: user.id,
-          title: taskTitle,
-          dueDate: nextMWF,
-          status: "PENDING",
-          taskType: taskType,
-          actionButton: actionButton as ActionButtonType,
-        currentAction: actionButton as ActionButtonType,
-        },
-      });
-
-      // Update stage if needed
-      if (newStageName) {
-        const newStage = await prisma.leadStage.findFirst({
-          where: {
-            organizationId: task.contact.organizationId,
-            name: newStageName,
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
           },
-        });
-
-        if (newStage) {
-          await prisma.contact.update({
-            where: { id: task.contactId },
-            data: {
-              stageId: newStage.id,
-              stageOrder: newStage.order,
-            },
-          });
-
-          await prisma.note.create({
-            data: {
-              contactId: task.contactId,
-              userId: user.id,
-              content: `Stage changed to "${newStageName}"`,
-              noteType: "STAGE_CHANGE",
-            },
-          });
-        }
-      }
-    }
-
-    // Handle "Not Interested" outcome
-    if (outcome.nextAction === "NOT_INTERESTED") {
-      const notInterestedStage = await prisma.leadStage.findFirst({
-        where: {
-          organizationId: task.contact.organizationId,
-          stageType: "NOT_INTERESTED",
         },
-      });
+      },
+      orderBy: { startTime: "asc" },
+    });
 
-      if (notInterestedStage) {
-        await prisma.contact.update({
-          where: { id: task.contactId },
-          data: {
-            stageId: notInterestedStage.id,
-            stageOrder: notInterestedStage.order,
-          },
-        });
-
-        await prisma.note.create({
-          data: {
-            contactId: task.contactId,
-            userId: user.id,
-            content: `Marked as "Not Interested"${outcome.notes ? `. Notes: ${outcome.notes}` : ""}`,
-            noteType: "STAGE_CHANGE",
-          },
-        });
-      }
-    }
-
-    revalidatePath(`/contacts/${task.contactId}`);
-    revalidatePath("/contacts");
-    revalidatePath("/tasks");
-    revalidatePath("/dashboard");
-
-    return { data: task };
+    return { data: appointments };
   } catch (error) {
-    console.error("Error completing appointment:", error);
-    return { error: "Failed to complete appointment" };
-  }
-}
-
-export async function markAsApproved(contactId: string, notes?: string) {
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  
-  if (authError || !user) {
-    return { error: "Unauthorized" };
-  }
-
-  try {
-    const contact = await prisma.contact.findUnique({
-      where: { id: contactId },
-    });
-
-    if (!contact) {
-      return { error: "Contact not found" };
-    }
-
-    // Find the "Approved" stage
-    const approvedStage = await prisma.leadStage.findFirst({
-      where: {
-        organizationId: contact.organizationId,
-        stageType: "APPROVED",
-      },
-    });
-
-    if (!approvedStage) {
-      return { error: "Approved stage not found" };
-    }
-
-    // Update contact stage and initialize job status
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        stageId: approvedStage.id,
-        stageOrder: approvedStage.order,
-        jobStatus: "SCHEDULED",
-        updatedAt: new Date(),
-      },
-    });
-
-    // Cancel all pending tasks
-    await prisma.task.updateMany({
-      where: {
-        contactId,
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-      },
-      data: {
-        status: "CANCELLED",
-      },
-    });
-
-    // Add note
-    await prisma.note.create({
-      data: {
-        contactId,
-        userId: user.id,
-        content: `🎉 Job approved!${notes ? `\n\nNotes: ${notes}` : ""}`,
-        noteType: "STAGE_CHANGE",
-      },
-    });
-
-    revalidatePath(`/contacts/${contactId}`);
-    revalidatePath("/contacts");
-    revalidatePath("/dashboard");
-
-    return { success: true };
-  } catch (error) {
-    console.error("Error marking as approved:", error);
-    return { error: "Failed to mark as approved" };
-  }
-}
-
-export async function markAsSeasonalFollowUp(contactId: string, followUpDate?: Date, notes?: string) {
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  
-  if (authError || !user) {
-    return { error: "Unauthorized" };
-  }
-
-  try {
-    const contact = await prisma.contact.findUnique({
-      where: { id: contactId },
-    });
-
-    if (!contact) {
-      return { error: "Contact not found" };
-    }
-
-    // Find the "Seasonal Follow-up" stage
-    const seasonalStage = await prisma.leadStage.findFirst({
-      where: {
-        organizationId: contact.organizationId,
-        stageType: "SEASONAL",
-      },
-    });
-
-    if (!seasonalStage) {
-      return { error: "Seasonal follow-up stage not found" };
-    }
-
-    // Calculate follow-up date
-    const futureDate = followUpDate || getSpringReminderDate();
-
-    // Update contact stage
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        stageId: seasonalStage.id,
-        stageOrder: seasonalStage.order,
-        seasonalReminderDate: futureDate,
-        updatedAt: new Date(),
-      },
-    });
-
-    // Cancel current pending tasks
-    await prisma.task.updateMany({
-      where: {
-        contactId,
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-      },
-      data: {
-        status: "CANCELLED",
-      },
-    });
-
-    // Add note
-    await prisma.note.create({
-      data: {
-        contactId,
-        userId: user.id,
-        content: `Moved to seasonal follow-up. Will follow up on ${format(futureDate, "MMM d, yyyy")}${notes ? `\n\nNotes: ${notes}` : ""}`,
-        noteType: "STAGE_CHANGE",
-      },
-    });
-
-    revalidatePath(`/contacts/${contactId}`);
-    revalidatePath("/contacts");
-    revalidatePath("/dashboard");
-
-    return { success: true };
-  } catch (error) {
-    console.error("Error marking as seasonal follow-up:", error);
-    return { error: "Failed to mark as seasonal follow-up" };
-  }
-}
-
-export async function markAsNotInterested(contactId: string, notes?: string) {
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  
-  if (authError || !user) {
-    return { error: "Unauthorized" };
-  }
-
-  try {
-    const contact = await prisma.contact.findUnique({
-      where: { id: contactId },
-    });
-
-    if (!contact) {
-      return { error: "Contact not found" };
-    }
-
-    // Find the "Not Interested" stage
-    const notInterestedStage = await prisma.leadStage.findFirst({
-      where: {
-        organizationId: contact.organizationId,
-        stageType: "NOT_INTERESTED",
-      },
-    });
-
-    if (!notInterestedStage) {
-      return { error: "Not Interested stage not found" };
-    }
-
-    // Update contact stage
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        stageId: notInterestedStage.id,
-        stageOrder: notInterestedStage.order,
-        updatedAt: new Date(),
-      },
-    });
-
-    // Cancel all pending tasks
-    await prisma.task.updateMany({
-      where: {
-        contactId,
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-      },
-      data: {
-        status: "CANCELLED",
-      },
-    });
-
-    // Add note
-    await prisma.note.create({
-      data: {
-        contactId,
-        userId: user.id,
-        content: `Marked as "Not Interested"${notes ? `\n\nNotes: ${notes}` : ""}`,
-        noteType: "STAGE_CHANGE",
-      },
-    });
-
-    revalidatePath(`/contacts/${contactId}`);
-    revalidatePath("/contacts");
-    revalidatePath("/dashboard");
-
-    return { success: true };
-  } catch (error) {
-    console.error("Error marking as not interested:", error);
-    return { error: "Failed to mark as not interested" };
+    console.error("Error fetching appointments:", error);
+    return { error: "Failed to fetch appointments", data: [] };
   }
 }

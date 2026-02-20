@@ -16,7 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ImportDialog } from "@/components/contacts/import-dialog";
-import { Plus, Search, Users, Clock, AlertCircle, ArrowUpDown } from "lucide-react";
+import { AccuLynxImportDialog } from "@/components/contacts/acculynx-import-dialog";
+import { Plus, Search, Users, Clock, AlertCircle, ArrowUpDown, FileSpreadsheet } from "lucide-react";
 import { formatDistanceToNow, isPast, isToday } from "date-fns";
 
 interface Contact {
@@ -81,6 +82,7 @@ export function ContactsView({
   const [search, setSearch] = useState(initialSearch);
   const [stageFilter, setStageFilter] = useState(initialStage);
   const [sort, setSort] = useState<SortOption>((initialSort as SortOption) || "updatedAt");
+  const [showAccuLynxImport, setShowAccuLynxImport] = useState(false);
 
   // Stage counts
   const stageCounts = useMemo(() => {
@@ -158,6 +160,10 @@ export function ContactsView({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => setShowAccuLynxImport(true)}>
+            <FileSpreadsheet className="w-4 h-4" />
+            Import from AccuLynx
+          </Button>
           <ImportDialog />
           <Link href="/contacts/new">
             <Button className="gap-2">
@@ -258,14 +264,20 @@ export function ContactsView({
                 : "Try adjusting your search or filter criteria."}
             </p>
             {contacts.length === 0 && (
-              <div className="flex items-center justify-center gap-3">
-                <ImportDialog />
-                <Link href="/contacts/new">
-                  <Button className="gap-2">
-                    <Plus className="w-4 h-4" />
-                    Add Contact
-                  </Button>
-                </Link>
+              <div className="flex flex-col items-center gap-3">
+                <Button variant="outline" className="gap-2" onClick={() => setShowAccuLynxImport(true)}>
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Import from AccuLynx
+                </Button>
+                <div className="flex items-center gap-3">
+                  <ImportDialog />
+                  <Link href="/contacts/new">
+                    <Button className="gap-2">
+                      <Plus className="w-4 h-4" />
+                      Add Contact
+                    </Button>
+                  </Link>
+                </div>
               </div>
             )}
           </div>
@@ -329,6 +341,12 @@ export function ContactsView({
           })}
         </div>
       )}
+
+      <AccuLynxImportDialog
+        open={showAccuLynxImport}
+        onOpenChange={setShowAccuLynxImport}
+        onComplete={() => router.refresh()}
+      />
     </div>
   );
 }

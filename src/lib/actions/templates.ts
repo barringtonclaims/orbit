@@ -3,30 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
 import { DEFAULT_TEMPLATES } from "@/lib/templates";
-
-export type TemplateCategory = 
-  | "FIRST_MESSAGE" 
-  | "FIRST_MESSAGE_FOLLOW_UP" 
-  | "APPOINTMENT_REMINDER"
-  | "QUOTE" 
-  | "QUOTE_FOLLOW_UP" 
-  | "CLAIM_RECOMMENDATION" 
-  | "CLAIM_REC_FOLLOW_UP" 
-  | "PA_AGREEMENT" 
-  | "PA_FOLLOW_UP" 
-  | "CLAIM_FOLLOW_UP" 
-  | "CARRIER_FOLLOW_UP"
-  | "SEASONAL" 
-  | "GENERAL";
 
 export interface CreateTemplateInput {
   name: string;
   subject?: string;
   body: string;
   templateType: "SMS" | "EMAIL";
-  category: TemplateCategory;
+  category: string;
+  taskTypeName?: string | null;
+  stageName?: string | null;
   isDefault?: boolean;
 }
 
@@ -50,12 +36,12 @@ export async function getTemplates(options?: {
       return { data: [] };
     }
 
-    const where: Prisma.MessageTemplateWhereInput = {
+    const where: Record<string, unknown> = {
       organizationId: membership.organizationId,
     };
 
     if (options?.category) {
-      where.category = options.category as Prisma.EnumTemplateCategoryFilter["equals"];
+      where.category = options.category;
     }
 
     if (options?.templateType) {
@@ -140,6 +126,8 @@ export async function createTemplate(input: CreateTemplateInput) {
         body: input.body,
         templateType: input.templateType,
         category: input.category,
+        taskTypeName: input.taskTypeName ?? null,
+        stageName: input.stageName ?? null,
         isDefault: input.isDefault || false,
       },
     });
@@ -192,6 +180,8 @@ export async function updateTemplate(id: string, input: Partial<CreateTemplateIn
         body: input.body,
         templateType: input.templateType,
         category: input.category,
+        taskTypeName: input.taskTypeName,
+        stageName: input.stageName,
         isDefault: input.isDefault,
         updatedAt: new Date(),
       },
@@ -244,18 +234,17 @@ export async function initializeDefaultTemplates(organizationId: string) {
     subject?: string;
     body: string;
     templateType: "SMS" | "EMAIL";
-    category: "FIRST_MESSAGE" | "FIRST_MESSAGE_FOLLOW_UP" | "QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "SEASONAL" | "GENERAL";
+    category: string;
     isDefault: boolean;
   }> = [];
 
-  // Create templates from defaults
   for (const [category, templates] of Object.entries(DEFAULT_TEMPLATES)) {
     if (templates.sms) {
       templatesToCreate.push({
         name: `Default ${category.replace(/_/g, ' ').toLowerCase()} SMS`,
         body: templates.sms,
         templateType: "SMS",
-        category: category as "FIRST_MESSAGE" | "FIRST_MESSAGE_FOLLOW_UP" | "QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "SEASONAL" | "GENERAL",
+        category,
         isDefault: true,
       });
     }
@@ -267,7 +256,7 @@ export async function initializeDefaultTemplates(organizationId: string) {
         subject: emailTemplate.subject,
         body: emailTemplate.body,
         templateType: "EMAIL",
-        category: category as "FIRST_MESSAGE" | "FIRST_MESSAGE_FOLLOW_UP" | "QUOTE" | "QUOTE_FOLLOW_UP" | "CLAIM_RECOMMENDATION" | "CLAIM_REC_FOLLOW_UP" | "PA_AGREEMENT" | "PA_FOLLOW_UP" | "CLAIM_FOLLOW_UP" | "SEASONAL" | "GENERAL",
+        category,
         isDefault: true,
       });
     }
@@ -322,34 +311,31 @@ export async function seedWorkflowTemplates() {
       subject?: string;
       body: string;
       templateType: "SMS" | "EMAIL";
-      category: TemplateCategory;
+      category: string;
       isDefault: boolean;
       organizationId: string;
     }> = [];
 
-    // Create templates for categories that don't have any
     for (const [category, templates] of Object.entries(DEFAULT_TEMPLATES)) {
-      const cat = category as TemplateCategory;
-      
-      if (templates.sms && !existingCategories.has(`${cat}_SMS`)) {
+      if (templates.sms && !existingCategories.has(`${category}_SMS`)) {
         templatesToCreate.push({
           name: `${category.replace(/_/g, ' ')} - Default SMS`,
           body: templates.sms,
           templateType: "SMS",
-          category: cat,
+          category,
           isDefault: true,
           organizationId,
         });
       }
       
-      if (templates.email && !existingCategories.has(`${cat}_EMAIL`)) {
+      if (templates.email && !existingCategories.has(`${category}_EMAIL`)) {
         const emailTemplate = templates.email as { subject: string; body: string };
         templatesToCreate.push({
           name: `${category.replace(/_/g, ' ')} - Default Email`,
           subject: emailTemplate.subject,
           body: emailTemplate.body,
           templateType: "EMAIL",
-          category: cat,
+          category,
           isDefault: true,
           organizationId,
         });
@@ -395,22 +381,20 @@ export async function getDefaultTemplate(
       return { data: null };
     }
 
-    // First try to find a user-defined default
     let template = await prisma.messageTemplate.findFirst({
       where: {
         organizationId: membership.organizationId,
-        category: category as Prisma.EnumTemplateCategoryFilter["equals"],
+        category,
         templateType,
         isDefault: true,
       },
     });
 
-    // If no default, get any template in that category
     if (!template) {
       template = await prisma.messageTemplate.findFirst({
         where: {
           organizationId: membership.organizationId,
-          category: category as Prisma.EnumTemplateCategoryFilter["equals"],
+          category,
           templateType,
         },
         orderBy: { createdAt: "asc" },

@@ -2,25 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getActiveOrgId } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-
-async function getActiveOrgId(userId: string): Promise<string | null> {
-  const dbUser = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { activeOrganizationId: true },
-  });
-  if (dbUser?.activeOrganizationId) {
-    const m = await prisma.organizationMember.findFirst({
-      where: { userId, organizationId: dbUser.activeOrganizationId },
-    });
-    if (m) return m.organizationId;
-  }
-  const m = await prisma.organizationMember.findFirst({
-    where: { userId },
-    orderBy: { joinedAt: "asc" },
-  });
-  return m?.organizationId ?? null;
-}
 
 export async function getCarriers() {
   const supabase = await createClient();

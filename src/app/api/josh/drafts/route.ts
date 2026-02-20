@@ -31,6 +31,7 @@ export async function GET(_request: NextRequest) {
             claimNumber: true,
             policyNumber: true,
             adjusterEmail: true,
+            stage: { select: { id: true, name: true } },
             carrierRef: {
               select: {
                 id: true,
@@ -55,7 +56,7 @@ export async function GET(_request: NextRequest) {
 }
 
 /**
- * PATCH /api/josh/drafts - Update a draft (edit body, subject, channel, or discard)
+ * PATCH /api/josh/drafts - Update a draft (edit body, subject, channel, actionPayload, or discard)
  */
 export async function PATCH(request: NextRequest) {
   try {
@@ -65,7 +66,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { id, body, subject, channel, status } = await request.json();
+    const { id, body, subject, channel, status, actionPayload } = await request.json();
     if (!id) {
       return NextResponse.json({ error: "Draft ID required" }, { status: 400 });
     }
@@ -77,6 +78,7 @@ export async function PATCH(request: NextRequest) {
         ...(subject !== undefined && { subject }),
         ...(channel !== undefined && { channel }),
         ...(status !== undefined && { status }),
+        ...(actionPayload !== undefined && { actionPayload }),
       },
     });
 

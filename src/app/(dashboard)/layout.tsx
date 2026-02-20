@@ -91,6 +91,11 @@ export default async function DashboardLayout({
     });
   }
 
+  // New users with no org get sent to onboarding
+  if (!membership) {
+    redirect("/onboarding");
+  }
+
   const userData = {
     id: user.id,
     email: user.email || "",
@@ -98,13 +103,11 @@ export default async function DashboardLayout({
     avatarUrl: dbUser.avatarUrl,
   };
 
-  const organization = membership
-    ? {
-        id: membership.organization.id,
-        name: membership.organization.name,
-        role: membership.role,
-      }
-    : null;
+  const organization = {
+    id: membership.organization.id,
+    name: membership.organization.name,
+    role: membership.role,
+  };
 
   return (
     <div className="min-h-screen bg-background">

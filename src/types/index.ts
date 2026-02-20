@@ -17,12 +17,9 @@ export {
   StageType,
   WorkflowType,
   TaskStatus,
-  TaskType,
-  ActionButton,
   NoteType,
   FileType,
   TemplateType,
-  TemplateCategory,
   JobStatus,
 } from '@prisma/client'
 
@@ -79,7 +76,6 @@ export interface ContactWithRelations {
     dueDate: Date
     status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
     taskType: string
-    actionButton: string | null
   }[]
   _count: {
     timeline: number
@@ -95,9 +91,6 @@ export interface TaskWithContact {
   completedAt: Date | null
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
   taskType: string
-  actionButton: string | null
-  appointmentTime: Date | null
-  calendarEventId: string | null
   contact: {
     id: string
     firstName: string

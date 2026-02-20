@@ -57,6 +57,14 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
+  // Onboarding is allowed for authenticated users with no org (handled in layout)
+  // Just ensure unauthenticated users can't access it
+  if (request.nextUrl.pathname.startsWith('/onboarding') && !user) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    return NextResponse.redirect(url)
+  }
+
   return supabaseResponse
 }
 

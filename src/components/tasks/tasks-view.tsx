@@ -10,16 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar as CalendarWidget } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "sonner";
-import { rescheduleTasksBatch, setTasksDateBatch } from "@/lib/actions/tasks";
-import { updateContactsStagesBatch, getLeadStages } from "@/lib/actions/stages";
+import { setTasksDateBatch } from "@/lib/actions/tasks";
+import { getLeadStages } from "@/lib/actions/stages";
 import { TaskList } from "@/components/tasks/task-list";
 import { BulkJoshDialog } from "@/components/tasks/bulk-josh-dialog";
 import { FixMissingTasksButton } from "@/components/tasks/fix-missing-tasks-button";
@@ -33,8 +26,6 @@ import {
   XCircle,
   Search,
   Loader2,
-  CalendarClock,
-  ArrowRight,
   X,
   CalendarDays,
   Zap,
@@ -48,10 +39,7 @@ interface Task {
   completedAt: Date | null;
   status: string;
   taskType: string;
-  actionButton: string | null;
-  currentAction: string | null;
   quickNotes: string | null;
-  appointmentTime: Date | null;
   contact: {
     id: string;
     firstName: string;
@@ -214,53 +202,6 @@ export function TasksView({
   }, [selectedIds, allTaskPool]);
 
   // Bulk actions
-  const handleBulkReschedule = async (officeDays: number) => {
-    setIsBulkActing(true);
-    try {
-      const result = await rescheduleTasksBatch(Array.from(selectedIds), officeDays);
-      if (result.error) {
-        toast.error(result.error);
-        return;
-      }
-      toast.success(`Rescheduled ${result.updated} task(s)`);
-      clearSelection();
-      router.refresh();
-    } catch {
-      toast.error("Failed to reschedule tasks");
-    } finally {
-      setIsBulkActing(false);
-    }
-  };
-
-  const handleBulkChangeStatus = async (stageId: string) => {
-    setIsBulkActing(true);
-    try {
-      // Collect unique contact IDs from selected tasks
-      const allTasks = [...activeTasks, ...seasonalTasks, ...notInterestedTasks, ...approvedTasks];
-      const contactIds = Array.from(
-        new Set(
-          Array.from(selectedIds)
-            .map((id) => allTasks.find((t) => t.id === id)?.contact.id)
-            .filter(Boolean) as string[]
-        )
-      );
-
-      const result = await updateContactsStagesBatch(contactIds, stageId);
-      if (result.error) {
-        toast.error(result.error);
-        return;
-      }
-      const stageName = stages.find((s) => s.id === stageId)?.name || "new status";
-      toast.success(`Moved ${result.succeeded} contact(s) to "${stageName}"`);
-      clearSelection();
-      router.refresh();
-    } catch {
-      toast.error("Failed to update statuses");
-    } finally {
-      setIsBulkActing(false);
-    }
-  };
-
   const handleBulkSetDate = async (date: Date) => {
     setIsBulkActing(true);
     try {
@@ -504,52 +445,15 @@ export function TasksView({
 
       {/* Floating Bulk Action Bar - rendered via portal to be truly fixed */}
       {mounted && selectedIds.size > 0 && createPortal(
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-background border-2 rounded-xl shadow-2xl px-5 py-3 flex items-center gap-3 animate-in slide-in-from-bottom-4">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-background border-2 rounded-xl shadow-2xl px-3 py-2 sm:px-5 sm:py-3 flex flex-wrap items-center justify-center gap-2 sm:gap-3 max-w-[calc(100vw-2rem)] animate-in slide-in-from-bottom-4">
           <span className="font-semibold text-sm whitespace-nowrap">{selectedIds.size} selected</span>
 
-          <div className="w-px h-6 bg-border" />
-
-          {/* Change Status */}
-          <Select onValueChange={handleBulkChangeStatus} disabled={isBulkActing}>
-            <SelectTrigger className="w-[170px] h-9">
-              <div className="flex items-center gap-2">
-                <ArrowRight className="w-4 h-4" />
-                <span>Change Status</span>
-              </div>
-            </SelectTrigger>
-            <SelectContent>
-              {stages.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
-                    {s.name}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Reschedule by office days */}
-          <Select onValueChange={(v) => handleBulkReschedule(parseInt(v))} disabled={isBulkActing}>
-            <SelectTrigger className="w-[150px] h-9">
-              <div className="flex items-center gap-2">
-                <CalendarClock className="w-4 h-4" />
-                <span>Reschedule</span>
-              </div>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">Next Office Day</SelectItem>
-              <SelectItem value="2">+2 Office Days</SelectItem>
-              <SelectItem value="3">+3 Office Days</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* Pick a specific date */}
+          {/* Set Date */}
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" size="sm" className="gap-2 h-9" disabled={isBulkActing}>
                 <CalendarDays className="w-4 h-4" />
-                Set Date
+                <span className="hidden sm:inline">Set Date</span>
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="center" side="top">
@@ -576,15 +480,15 @@ export function TasksView({
             onClick={() => setShowBulkJoshDialog(true)}
           >
             <Zap className="w-4 h-4" />
-            Bulk Action
+            <span className="hidden sm:inline">Bulk Action</span>
           </Button>
 
-          <div className="w-px h-6 bg-border" />
+          <div className="w-px h-6 bg-border hidden sm:block" />
 
           {/* Clear */}
           <Button variant="ghost" size="sm" onClick={clearSelection} disabled={isBulkActing}>
-            <X className="w-4 h-4 mr-1" />
-            Clear
+            <X className="w-4 h-4 sm:mr-1" />
+            <span className="hidden sm:inline">Clear</span>
           </Button>
 
           {isBulkActing && <Loader2 className="w-4 h-4 animate-spin" />}

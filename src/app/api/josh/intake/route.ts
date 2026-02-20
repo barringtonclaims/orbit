@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { parseGmailMessage, type ParsedEmail } from "@/lib/gmail";
 import { isAccuLynxEmail, parseAccuLynxEmail, isNewLeadNotification } from "@/lib/josh/acculynx-parser";
 import { getValidAccessToken } from "@/lib/google-oauth";
-import { generateTaskTitle, getActionButtonForTaskType } from "@/lib/scheduling";
+import { generateTaskTitle } from "@/lib/scheduling";
 import { revalidatePath } from "next/cache";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1";
@@ -324,7 +324,6 @@ async function processIntake(
 
               // Create initial task
               const contactName = `${firstName} ${lastName}`.trim();
-              const actionButton = getActionButtonForTaskType("FIRST_MESSAGE");
               
               await prisma.task.create({
                 data: {
@@ -334,8 +333,6 @@ async function processIntake(
                   dueDate: new Date(), // Set to today so it's actionable
                   status: "PENDING",
                   taskType: "FIRST_MESSAGE",
-                  actionButton: actionButton as "SEND_FIRST_MESSAGE" | null,
-                  currentAction: actionButton as "SEND_FIRST_MESSAGE" | null,
                 },
               });
 

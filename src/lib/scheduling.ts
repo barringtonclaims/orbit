@@ -14,6 +14,18 @@ const DEFAULT_OFFICE_DAYS = [1, 3, 5]
 const DEFAULT_INSPECTION_DAYS = [2, 4]
 
 /**
+ * Normalize an office/inspection days array from the database.
+ * The DB stores this as a Json field which can come back as number[] or string[].
+ * This ensures all values are actual JS numbers so that `Array.includes(getDay())`
+ * comparisons work correctly.
+ */
+export function normalizeOfficeDays(days: unknown, fallback = DEFAULT_OFFICE_DAYS): number[] {
+  if (!Array.isArray(days) || days.length === 0) return fallback;
+  const normalized = days.map((d) => Number(d)).filter((d) => !isNaN(d) && d >= 0 && d <= 6);
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+/**
  * Check if a specific date is an office day
  * @param date The date to check
  * @param officeDays Array of allowed day numbers (0=Sun, 1=Mon, etc.)

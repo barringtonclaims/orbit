@@ -3,29 +3,14 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "sonner";
-import { updateContactsStagesBatch } from "@/lib/actions/stages";
-import { X, ArrowRight, Download, Loader2, Zap } from "lucide-react";
+import { X, Download, Loader2, Zap } from "lucide-react";
 import type { FenceContactResult } from "@/lib/actions/fences";
 import { FenceBulkJoshDialog } from "@/components/fence/fence-bulk-josh-dialog";
-
-interface Stage {
-  id: string;
-  name: string;
-  color: string;
-}
 
 interface FenceBulkActionsProps {
   selectedIds: Set<string>;
   results: FenceContactResult[];
-  stages: Stage[];
   onClearSelection: () => void;
   onActionComplete: () => void;
 }
@@ -33,7 +18,6 @@ interface FenceBulkActionsProps {
 export function FenceBulkActions({
   selectedIds,
   results,
-  stages,
   onClearSelection,
   onActionComplete,
 }: FenceBulkActionsProps) {
@@ -43,27 +27,6 @@ export function FenceBulkActions({
   const selectedContacts = results.filter((r) => selectedIds.has(r.id));
 
   if (selectedIds.size === 0) return null;
-
-  const handleChangeStage = async (stageId: string) => {
-    setIsActing(true);
-    try {
-      const contactIds = Array.from(selectedIds);
-      const result = await updateContactsStagesBatch(contactIds, stageId);
-      if ("error" in result && result.error) {
-        toast.error(result.error);
-      } else if ("succeeded" in result) {
-        toast.success(
-          `Updated ${result.succeeded} of ${result.total} contacts`
-        );
-        onClearSelection();
-        onActionComplete();
-      }
-    } catch {
-      toast.error("Failed to update stages");
-    } finally {
-      setIsActing(false);
-    }
-  };
 
   const handleExportCsv = () => {
     const selected = results.filter((r) => selectedIds.has(r.id));
@@ -108,87 +71,60 @@ export function FenceBulkActions({
     toast.success(`Exported ${selected.length} contacts`);
   };
 
-  return (<>
-    {createPortal(
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-background border-2 rounded-xl shadow-2xl px-5 py-3 flex items-center gap-3 animate-in slide-in-from-bottom-4">
-      <span className="font-semibold text-sm whitespace-nowrap">
-        {selectedIds.size} selected
-      </span>
+  return (
+    <>
+      {createPortal(
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-background border-2 rounded-xl shadow-2xl px-3 py-2 sm:px-5 sm:py-3 flex flex-wrap items-center justify-center gap-2 sm:gap-3 max-w-[calc(100vw-2rem)] animate-in slide-in-from-bottom-4">
+          <span className="font-semibold text-sm whitespace-nowrap">
+            {selectedIds.size} selected
+          </span>
 
-      <div className="w-px h-6 bg-border" />
+          {/* Josh AI */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 h-9"
+            disabled={isActing}
+            onClick={() => setShowJoshDialog(true)}
+          >
+            <Zap className="w-4 h-4" />
+            <span className="hidden sm:inline">Josh</span>
+          </Button>
 
-      {/* Change Stage */}
-      <Select onValueChange={handleChangeStage} disabled={isActing}>
-        <SelectTrigger className="w-[170px] h-9">
-          <div className="flex items-center gap-2">
-            <ArrowRight className="w-4 h-4" />
-            <span>Change Stage</span>
-          </div>
-        </SelectTrigger>
-        <SelectContent>
-          {stages.map((s) => (
-            <SelectItem key={s.id} value={s.id}>
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: s.color }}
-                />
-                {s.name}
-              </div>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+          {/* Export CSV */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 h-9"
+            disabled={isActing}
+            onClick={handleExportCsv}
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">Export</span>
+          </Button>
 
-      {/* Josh AI */}
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setShowJoshDialog(true)}
-        disabled={isActing}
-        className="h-9"
-      >
-        <Zap className="w-4 h-4 mr-1" />
-        Josh
-      </Button>
+          <div className="w-px h-6 bg-border hidden sm:block" />
 
-      {/* Export CSV */}
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleExportCsv}
-        disabled={isActing}
-        className="h-9"
-      >
-        <Download className="w-4 h-4 mr-1" />
-        Export
-      </Button>
+          {/* Clear */}
+          <Button variant="ghost" size="sm" onClick={onClearSelection} disabled={isActing}>
+            <X className="w-4 h-4 sm:mr-1" />
+            <span className="hidden sm:inline">Clear</span>
+          </Button>
 
-      {/* Loading indicator */}
-      {isActing && <Loader2 className="w-4 h-4 animate-spin" />}
+          {isActing && <Loader2 className="w-4 h-4 animate-spin" />}
+        </div>,
+        document.body
+      )}
 
-      {/* Clear */}
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onClearSelection}
-        className="h-8 w-8"
-      >
-        <X className="w-4 h-4" />
-      </Button>
-    </div>,
-    document.body
-  )}
-
-    <FenceBulkJoshDialog
-      open={showJoshDialog}
-      onOpenChange={setShowJoshDialog}
-      contacts={selectedContacts}
-      onComplete={() => {
-        onClearSelection();
-        onActionComplete();
-      }}
-    />
-  </>
+      <FenceBulkJoshDialog
+        open={showJoshDialog}
+        onOpenChange={setShowJoshDialog}
+        contacts={selectedContacts}
+        onComplete={() => {
+          onClearSelection();
+          onActionComplete();
+        }}
+      />
+    </>
   );
 }

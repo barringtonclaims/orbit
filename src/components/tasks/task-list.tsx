@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
@@ -34,17 +34,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { completeTask, rescheduleTaskByOfficeDays, updateTaskNotes } from "@/lib/actions/tasks";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarWidget } from "@/components/ui/calendar";
+import { completeTask, rescheduleTask, updateTaskNotes } from "@/lib/actions/tasks";
 import { updateContact } from "@/lib/actions/contacts";
 import { updateContactStage } from "@/lib/actions/stages";
 import { getLeadStages } from "@/lib/actions/stages";
 import { TaskActionButton } from "@/components/tasks/task-action-button";
 import { CarrierSelect } from "@/components/contacts/carrier-select";
+import { ScheduleAppointmentDialog } from "@/components/shared/schedule-appointment-dialog";
+import { getCustomAppointmentTypes } from "@/lib/actions/custom-types";
 import { format, isPast, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
   CheckSquare,
   Calendar,
+  CalendarDays,
   AlertCircle,
   AlertTriangle,
   Clock,
@@ -66,10 +71,7 @@ interface Task {
   completedAt: Date | null;
   status: string;
   taskType: string;
-  actionButton: string | null;
-  currentAction: string | null;
   quickNotes: string | null;
-  appointmentTime: Date | null;
   contact: {
     id: string;
     firstName: string;
@@ -128,6 +130,13 @@ export function TaskList({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [stages, setStages] = useState<{ id: string; name: string; stageType: string; isTerminal: boolean }[]>([]);
 
+  // Set date dialog state
+  const [showSetDateDialog, setShowSetDateDialog] = useState(false);
+  const [setDateTask, setSetDateTask] = useState<Task | null>(null);
+
+  // Progress dialog date override
+  const [progressDate, setProgressDate] = useState<Date | undefined>(undefined);
+
   // Claim info dialog state
   const [showClaimDialog, setShowClaimDialog] = useState(false);
   const [claimTask, setClaimTask] = useState<Task | null>(null);
@@ -136,6 +145,11 @@ export function TaskList({
   const [claimAdjusterEmail, setClaimAdjusterEmail] = useState<string | null>(null);
   const [claimNumber, setClaimNumber] = useState("");
   const [isSavingClaim, setIsSavingClaim] = useState(false);
+
+  // Schedule appointment dialog state
+  const [appointmentTypes, setAppointmentTypes] = useState<{ id: string; name: string; includesLocation: boolean }[]>([]);
+  const [appointmentTask, setAppointmentTask] = useState<Task | null>(null);
+  const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
 
   // Status-to-default-task mapping
   const STATUS_TASK_MAP: Record<string, string> = {
@@ -185,6 +199,7 @@ export function TaskList({
     setNextTaskType("");
     setCustomTaskName("");
     setTaskNameMode("auto");
+    setProgressDate(undefined);
 
     if (stages.length === 0) {
       const result = await getLeadStages();
@@ -219,34 +234,34 @@ export function TaskList({
 
     setIsSubmitting(true);
     try {
-      // If status is changing, update it (this cancels old tasks and creates new ones)
       if (hasStatusChange) {
-        const stageResult = await updateContactStage(progressingTask.contact.id, nextStatus);
+        const taskOverride = hasCustomTask
+          ? { customTitle: customTaskName.trim() }
+          : hasPresetTask
+            ? { taskType: nextTaskType }
+            : undefined;
+
+        const stageResult = await updateContactStage(
+          progressingTask.contact.id,
+          nextStatus,
+          progressDate,
+          taskOverride
+        );
         if (stageResult.error) {
           toast.error(stageResult.error);
           return;
         }
-      }
-
-      // Complete the current task and create next one
-      if (!hasStatusChange && (hasCustomTask || hasPresetTask)) {
+        // updateContactStage already cancelled old tasks and created the new one,
+        // so just mark the current task complete without creating another
+        await completeTask(progressingTask.id);
+      } else {
         // Task-only change (no status change)
         const nextType = hasPresetTask ? (nextTaskType as "FOLLOW_UP") : ("FOLLOW_UP" as const);
         await completeTask(progressingTask.id, {
           nextTaskType: nextType,
           customTitle: hasCustomTask ? customTaskName.trim() : undefined,
+          dueDate: progressDate,
         });
-      } else if (hasStatusChange && hasCustomTask) {
-        // Status changed AND custom task name - updateContactStage created a default task,
-        // but we need to replace it with the custom-named one
-        await completeTask(progressingTask.id, {});
-        // The safety net in completeTask won't fire since updateContactStage already made a task.
-        // We need to update the most recent pending task's title.
-        // This is handled by the fact that updateContactStage creates the task,
-        // but if user wants a custom name, we update it after.
-      } else {
-        // Status changed with auto task - updateContactStage already created the right task
-        await completeTask(progressingTask.id, {});
       }
 
       const msg = hasStatusChange 
@@ -259,6 +274,7 @@ export function TaskList({
       setNextTaskType("");
       setCustomTaskName("");
       setTaskNameMode("auto");
+      setProgressDate(undefined);
       router.refresh();
     } catch {
       toast.error("Failed to progress task");
@@ -296,17 +312,17 @@ export function TaskList({
     }
   };
 
-  const handleReschedule = async (task: Task, officeDaysToSkip: number) => {
+  const handleSetDate = async (taskId: string, date: Date) => {
     setIsSubmitting(true);
     try {
-      const result = await rescheduleTaskByOfficeDays(task.id, officeDaysToSkip);
+      const result = await rescheduleTask(taskId, date);
       if (result.error) {
         toast.error(result.error);
         return;
       }
-      if (result.newDate) {
-        toast.success(`Rescheduled to ${format(result.newDate, "MMM d")}`);
-      }
+      toast.success(`Rescheduled to ${format(date, "MMM d")}`);
+      setShowSetDateDialog(false);
+      setSetDateTask(null);
       router.refresh();
     } catch {
       toast.error("Failed to reschedule");
@@ -356,6 +372,12 @@ export function TaskList({
       setIsSavingClaim(false);
     }
   };
+
+  useEffect(() => {
+    getCustomAppointmentTypes().then((result) => {
+      if (result.data) setAppointmentTypes(result.data);
+    });
+  }, []);
 
   const getTaskStatus = (task: Task) => {
     if (task.status === "COMPLETED") return "completed";
@@ -492,14 +514,13 @@ export function TaskList({
                         Progress Task
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => handleReschedule(task, 1)}>
-                        Next Office Day
+                      <DropdownMenuItem onClick={() => { setSetDateTask(task); setShowSetDateDialog(true); }}>
+                        <CalendarDays className="w-4 h-4 mr-2" />
+                        Set Date
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleReschedule(task, 2)}>
-                        +2 Office Days
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleReschedule(task, 3)}>
-                        +3 Office Days
+                      <DropdownMenuItem onClick={() => { setAppointmentTask(task); setShowAppointmentDialog(true); }}>
+                        <CalendarDays className="w-4 h-4 mr-2" />
+                        Schedule Appointment
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem asChild>
@@ -648,6 +669,36 @@ export function TaskList({
               )}
             </div>
 
+            {/* Set Date for next task */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Set Date <span className="text-muted-foreground font-normal">(optional)</span></label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start text-left font-normal gap-2">
+                    <CalendarDays className="w-4 h-4" />
+                    {progressDate ? format(progressDate, "MMM d, yyyy") : "Auto (next office day)"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <CalendarWidget
+                    mode="single"
+                    selected={progressDate}
+                    onSelect={(date) => setProgressDate(date)}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+              {progressDate && (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                  onClick={() => setProgressDate(undefined)}
+                >
+                  Reset to auto
+                </button>
+              )}
+            </div>
+
             {/* Quick terminal actions */}
             <div className="border-t pt-4 space-y-2">
               <p className="text-xs font-medium text-muted-foreground uppercase">Quick Actions</p>
@@ -754,6 +805,44 @@ export function TaskList({
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {appointmentTask && (
+        <ScheduleAppointmentDialog
+          open={showAppointmentDialog}
+          onOpenChange={(open) => { setShowAppointmentDialog(open); if (!open) setAppointmentTask(null); }}
+          contact={{
+            id: appointmentTask.contact.id,
+            firstName: appointmentTask.contact.firstName,
+            lastName: appointmentTask.contact.lastName,
+            address: appointmentTask.contact.address ?? undefined,
+            city: null,
+            state: null,
+            phone: appointmentTask.contact.phone,
+          }}
+          appointmentTypes={appointmentTypes}
+          onSuccess={() => router.refresh()}
+        />
+      )}
+
+      {/* Set Date Dialog */}
+      <Dialog open={showSetDateDialog} onOpenChange={(open) => { setShowSetDateDialog(open); if (!open) setSetDateTask(null); }}>
+        <DialogContent className="w-auto p-0 border-0 shadow-2xl" aria-describedby="set-date-desc">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Set Task Date</DialogTitle>
+            <DialogDescription id="set-date-desc">
+              Pick a new due date for {setDateTask?.contact.firstName} {setDateTask?.contact.lastName}&apos;s task.
+            </DialogDescription>
+          </DialogHeader>
+          <CalendarWidget
+            mode="single"
+            selected={setDateTask ? new Date(setDateTask.dueDate) : undefined}
+            onSelect={(date) => {
+              if (date && setDateTask) handleSetDate(setDateTask.id, date);
+            }}
+            initialFocus
+          />
         </DialogContent>
       </Dialog>
     </>

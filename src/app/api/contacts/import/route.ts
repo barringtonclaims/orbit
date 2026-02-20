@@ -1,27 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getActiveOrgId } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import * as XLSX from "xlsx";
-import { generateTaskTitle, getActionButtonForTaskType } from "@/lib/scheduling";
+import { generateTaskTitle } from "@/lib/scheduling";
 import { revalidatePath } from "next/cache";
-
-async function getActiveOrgId(userId: string): Promise<string | null> {
-  const dbUser = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { activeOrganizationId: true },
-  });
-  if (dbUser?.activeOrganizationId) {
-    const m = await prisma.organizationMember.findFirst({
-      where: { userId, organizationId: dbUser.activeOrganizationId },
-    });
-    if (m) return m.organizationId;
-  }
-  const m = await prisma.organizationMember.findFirst({
-    where: { userId },
-    orderBy: { joinedAt: "asc" },
-  });
-  return m?.organizationId ?? null;
-}
 
 /**
  * POST /api/contacts/import - Import contacts from CSV/Excel
@@ -61,7 +44,6 @@ export async function POST(request: NextRequest) {
       where: { organizationId: orgId, order: 0 },
     });
 
-    const actionButton = getActionButtonForTaskType("FIRST_MESSAGE");
     let created = 0;
     let skipped = 0;
     const errors: string[] = [];
@@ -134,8 +116,6 @@ export async function POST(request: NextRequest) {
             dueDate: new Date(),
             status: "PENDING",
             taskType: "FIRST_MESSAGE",
-            actionButton: actionButton as "SEND_FIRST_MESSAGE" | null,
-            currentAction: actionButton as "SEND_FIRST_MESSAGE" | null,
           },
         });
 

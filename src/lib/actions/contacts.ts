@@ -3,13 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import prisma from "@/lib/prisma";
-import { generateTaskTitle, getActionButtonForTaskType } from "@/lib/scheduling";
+import { generateTaskTitle } from "@/lib/scheduling";
 import { Prisma } from "@prisma/client";
 import { createDefaultStages } from "./stages";
 import { geocodeAddress } from "./geocode";
-
-// Type for all action buttons
-type ActionButtonType = "SEND_FIRST_MESSAGE" | "SEND_FIRST_MESSAGE_FOLLOW_UP" | "SCHEDULE_INSPECTION" | "SEND_APPOINTMENT_REMINDER" | "ASSIGN_STATUS" | "SEND_QUOTE" | "SEND_QUOTE_FOLLOW_UP" | "SEND_CLAIM_REC" | "SEND_CLAIM_REC_FOLLOW_UP" | "SEND_PA_AGREEMENT" | "SEND_PA_FOLLOW_UP" | "SEND_CLAIM_FOLLOW_UP" | "UPLOAD_PA" | "SEND_SEASONAL_MESSAGE" | "MARK_RESPONDED" | "MARK_JOB_SCHEDULED" | "MARK_JOB_IN_PROGRESS" | "MARK_JOB_COMPLETE" | "JOSH_DRAFT_MESSAGE" | null;
 
 export interface CreateContactInput {
   firstName: string;
@@ -201,7 +198,6 @@ export async function createContact(input: CreateContactInput) {
     // Create initial task for first message
     const today = new Date();
     const contactName = `${input.firstName} ${input.lastName}`;
-    const actionButton = getActionButtonForTaskType("FIRST_MESSAGE");
     
     await prisma.task.create({
       data: {
@@ -211,8 +207,6 @@ export async function createContact(input: CreateContactInput) {
         dueDate: today,
         status: "PENDING",
         taskType: "FIRST_MESSAGE",
-        actionButton: actionButton as ActionButtonType,
-        currentAction: actionButton as ActionButtonType,
       },
     });
 

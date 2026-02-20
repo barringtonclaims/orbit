@@ -28,6 +28,7 @@ model User {
   createdContacts  Contact[] @relation("CreatedBy")
   tasks            Task[]
   notes            Note[]
+  appointments     Appointment[]
   joshMessages     JoshMessage[]
   joshDrafts       JoshDraft[]
   connectedGoogleTokens GoogleToken[]
@@ -52,13 +53,16 @@ model Organization {
   updatedAt      DateTime  @updatedAt
 
   // Relations
-  members          OrganizationMember[]
-  contacts         Contact[]
-  leadStages       LeadStage[]
-  messageTemplates MessageTemplate[]
-  carriers         Carrier[]
-  googleToken      GoogleToken?
-  fences           Fence[]
+  members                OrganizationMember[]
+  contacts               Contact[]
+  leadStages             LeadStage[]
+  messageTemplates       MessageTemplate[]
+  carriers               Carrier[]
+  googleToken            GoogleToken?
+  fences                 Fence[]
+  customTaskTypes        CustomTaskType[]
+  customAppointmentTypes CustomAppointmentType[]
+  resourceCompanies      ResourceCompany[]
 
   @@map("organizations")
 }
@@ -147,6 +151,7 @@ model Contact {
   stage          LeadStage?   @relation(fields: [stageId], references: [id], onDelete: SetNull)
   carrierRef     Carrier?     @relation(fields: [carrierId], references: [id], onDelete: SetNull)
   tasks          Task[]
+  appointments   Appointment[]
   timeline       Note[]
   files          ContactFile[]
   joshDrafts     JoshDraft[]
@@ -210,6 +215,7 @@ model LeadStage {
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   contacts       Contact[]
+  taskTypes      CustomTaskType[]
 
   @@unique([organizationId, name])
   @@map("lead_stages")
@@ -244,16 +250,9 @@ model Task {
   dueDate     DateTime
   completedAt DateTime?
   status      TaskStatus   @default(PENDING)
-  taskType    TaskType     @default(FOLLOW_UP)
-  actionButton ActionButton? // Which action button to show for this task
-  currentAction ActionButton? // The current dynamic action button (changes based on progress)
+  taskType    String       @default("Follow Up")
   
-  // Quick notes for the user
   quickNotes  String?
-  
-  // For appointments
-  appointmentTime DateTime?
-  calendarEventId String?   // Google Calendar event ID
   
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -277,71 +276,67 @@ enum TaskStatus {
   CANCELLED
 }
 
-enum TaskType {
-  // Initial workflow
-  FIRST_MESSAGE              // New lead - send first message
-  FIRST_MESSAGE_FOLLOW_UP    // Follow up if no response to first message
-  SET_APPOINTMENT            // Schedule initial inspection (task title, action changes)
-  APPOINTMENT                // Scheduled inspection (also calendar event)
-  APPOINTMENT_REMINDER       // Send appointment reminder before inspection
-  DISCUSS_INSPECTION         // Discuss inspection results (day after inspection)
-  ASSIGN_STATUS              // Post-inspection - assign retail or claim
-  
-  // Retail workflow
-  WRITE_QUOTE                // Legacy - write quote (deprecated, use SEND_QUOTE)
-  SEND_QUOTE                 // Write and send quote
-  QUOTE_FOLLOW_UP            // Follow up on sent quote
-  
-  // Claim workflow
-  CLAIM_RECOMMENDATION       // Send initial claim recommendation
-  CLAIM_REC_FOLLOW_UP        // Follow up on claim recommendation
-  PA_AGREEMENT               // Send PA (Public Adjuster) agreement
-  PA_FOLLOW_UP               // Follow up on PA agreement
-  CLAIM_FOLLOW_UP            // Ongoing claim follow-up (after PA signed)
-  
-  // Seasonal
-  SEASONAL_FOLLOW_UP         // Contact customer on seasonal date
-  
-  // General
-  FOLLOW_UP                  // Generic follow-up
-  CUSTOM                     // Custom user-created task
+// ============================================
+// CUSTOM TASK & APPOINTMENT TYPES (user-configurable)
+// ============================================
+
+model CustomTaskType {
+  id              String       @id @default(uuid())
+  organizationId  String
+  name            String
+  description     String?
+  defaultDueDays  Int?
+  stageId         String?
+  isSystem        Boolean      @default(false)
+  order           Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  stage           LeadStage?   @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([stageId])
+  @@map("custom_task_types")
 }
 
-// Action buttons that appear on tasks based on context
-enum ActionButton {
-  // Initial workflow actions
-  SEND_FIRST_MESSAGE         // Opens template selector for first message SMS
-  SEND_FIRST_MESSAGE_FOLLOW_UP // Opens template for first message follow-up
-  SCHEDULE_INSPECTION        // Opens calendar to schedule inspection
-  SEND_APPOINTMENT_REMINDER  // Opens template for appointment reminder
-  ASSIGN_STATUS              // Opens modal to select retail/claim + notes
-  
-  // Retail workflow actions
-  SEND_QUOTE                 // Opens template selector for quote email
-  SEND_QUOTE_FOLLOW_UP       // Opens template for quote follow-up
-  
-  // Claim workflow actions
-  SEND_CLAIM_REC             // Opens template for claim recommendation
-  SEND_CLAIM_REC_FOLLOW_UP   // Opens template for claim rec follow-up
-  SEND_PA_AGREEMENT          // Opens template for PA agreement
-  SEND_PA_FOLLOW_UP          // Opens template for PA follow-up
-  SEND_CLAIM_FOLLOW_UP       // Opens template for open claim follow-up
-  UPLOAD_PA                  // Opens file upload for signed PA
-  
-  // Seasonal workflow actions
-  SEND_SEASONAL_MESSAGE      // Opens template for seasonal follow-up
-  
-  // Carrier follow-up actions
-  SEND_CARRIER_FOLLOW_UP     // Opens carrier follow-up composer
-  
-  // Job status actions
-  MARK_RESPONDED             // Mark that customer responded
-  MARK_JOB_SCHEDULED         // Mark job as scheduled
-  MARK_JOB_IN_PROGRESS       // Mark job as in progress
-  MARK_JOB_COMPLETE          // Mark job as complete
-  
-  // Josh AI actions
-  JOSH_DRAFT_MESSAGE         // Let Josh AI draft a contextual message
+model CustomAppointmentType {
+  id               String       @id @default(uuid())
+  organizationId   String
+  name             String
+  includesLocation Boolean      @default(true)
+  isSystem         Boolean      @default(false)
+  order            Int          @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("custom_appointment_types")
+}
+
+// ============================================
+// APPOINTMENTS (separate from tasks, calendar-only)
+// ============================================
+
+model Appointment {
+  id              String    @id @default(uuid())
+  contactId       String
+  userId          String
+  title           String
+  type            String
+  startTime       DateTime
+  endTime         DateTime?
+  location        String?
+  description     String?
+  calendarEventId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  contact         Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id])
+  @@index([contactId])
+  @@index([userId])
+  @@index([startTime])
+  @@map("appointments")
 }
 
 // ============================================
@@ -421,19 +416,21 @@ enum FileType {
 // ============================================
 
 model MessageTemplate {
-  id             String           @id @default(uuid())
+  id             String       @id @default(uuid())
   organizationId String
   
   name           String
-  subject        String?          // For email templates
+  subject        String?
   body           String
   templateType   TemplateType
-  category       TemplateCategory @default(GENERAL)
-  variables      Json?            // Available variables: ["first_name", "address", "carrier", etc.]
-  isDefault      Boolean          @default(false)
+  category       String       @default("General")
+  taskTypeName   String?      // Associates template with a custom task type
+  stageName      String?      // Associates template with a stage
+  variables      Json?
+  isDefault      Boolean      @default(false)
   
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -445,22 +442,6 @@ model MessageTemplate {
 enum TemplateType {
   SMS
   EMAIL
-}
-
-enum TemplateCategory {
-  FIRST_MESSAGE           // Initial contact SMS
-  FIRST_MESSAGE_FOLLOW_UP // Follow up if no response to first message
-  APPOINTMENT_REMINDER    // Reminder before scheduled inspection
-  QUOTE                   // Quote email
-  QUOTE_FOLLOW_UP         // Quote follow-up
-  CLAIM_RECOMMENDATION    // Initial claim recommendation email
-  CLAIM_REC_FOLLOW_UP     // Claim recommendation follow-up
-  PA_AGREEMENT            // PA agreement email
-  PA_FOLLOW_UP            // PA agreement follow-up
-  CLAIM_FOLLOW_UP         // Ongoing claim follow-up
-  CARRIER_FOLLOW_UP       // Follow-up email to insurance carrier
-  SEASONAL                // Seasonal follow-up message
-  GENERAL                 // General purpose template
 }
 
 // ============================================
@@ -629,6 +610,9 @@ model JoshDraft {
   body           String
   directive      String   // The original user directive
 
+  draftType      String   @default("message") // "message" | "progress_task" | "add_note" | "set_date"
+  actionPayload  Json?    // Structured data for non-message actions
+
   status         String   @default("pending") // "pending", "sent", "discarded"
 
   createdAt      DateTime @default(now())
@@ -663,4 +647,41 @@ model Fence {
 
   @@index([organizationId])
   @@map("fences")
+}
+
+// ============================================
+// RESOURCE CONTACTS (suppliers, subs, adjusters, etc.)
+// ============================================
+
+model ResourceCompany {
+  id             String    @id @default(uuid())
+  organizationId String
+  name           String
+  type           String    // "Supplier", "Subcontractor", "Appraiser", "Adjuster Firm", "Other"
+  phone          String?
+  email          String?
+  address        String?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts       ResourceContact[]
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("resource_companies")
+}
+
+model ResourceContact {
+  id        String   @id @default(uuid())
+  companyId String
+  name      String
+  role      String?  // "Sales Rep", "Estimator", "Field Adjuster", "Owner", etc.
+  phone     String?
+  email     String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   ResourceCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  @@index([companyId])
+  @@map("resource_contacts")
 }
