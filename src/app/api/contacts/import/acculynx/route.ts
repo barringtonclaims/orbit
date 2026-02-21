@@ -9,6 +9,7 @@ import { STAGE_NAMES } from "@/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
 import { checkContactsWithoutTasks } from "@/lib/workflow-engine";
+import { createDefaultStages } from "@/lib/actions/stages";
 
 // Extend serverless function timeout (Vercel Pro supports up to 300s)
 export const maxDuration = 300;
@@ -62,6 +63,60 @@ function getVal(row: Record<string, string>, key: string): string | null {
   return trimmed || null;
 }
 
+const STATE_ABBREVS: Record<string, string> = {
+  ALABAMA: "AL", ALASKA: "AK", ARIZONA: "AZ", ARKANSAS: "AR", CALIFORNIA: "CA",
+  COLORADO: "CO", CONNECTICUT: "CT", DELAWARE: "DE", FLORIDA: "FL", GEORGIA: "GA",
+  HAWAII: "HI", IDAHO: "ID", ILLINOIS: "IL", INDIANA: "IN", IOWA: "IA",
+  KANSAS: "KS", KENTUCKY: "KY", LOUISIANA: "LA", MAINE: "ME", MARYLAND: "MD",
+  MASSACHUSETTS: "MA", MICHIGAN: "MI", MINNESOTA: "MN", MISSISSIPPI: "MS",
+  MISSOURI: "MO", MONTANA: "MT", NEBRASKA: "NE", NEVADA: "NV",
+  "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ", "NEW MEXICO": "NM", "NEW YORK": "NY",
+  "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND", OHIO: "OH", OKLAHOMA: "OK",
+  OREGON: "OR", PENNSYLVANIA: "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC",
+  "SOUTH DAKOTA": "SD", TENNESSEE: "TN", TEXAS: "TX", UTAH: "UT", VERMONT: "VT",
+  VIRGINIA: "VA", WASHINGTON: "WA", "WEST VIRGINIA": "WV", WISCONSIN: "WI",
+  WYOMING: "WY", "DISTRICT OF COLUMBIA": "DC",
+};
+
+/**
+ * Parse a combined address like "319 Claremont Court, Naperville, IL 60540 US"
+ * into { street, city, state, zipCode }. Also handles full state names.
+ */
+function parseCombinedAddress(raw: string | null): {
+  street: string | null;
+  city: string | null;
+  state: string | null;
+  zipCode: string | null;
+} {
+  const empty = { street: null, city: null, state: null, zipCode: null };
+  if (!raw || raw.replace(/n\/a/gi, "").replace(/[,\s]/g, "") === "") return empty;
+
+  const cleaned = raw.replace(/\s+US\s*$/i, "").trim();
+  const parts = cleaned.split(",").map((s) => s.trim());
+  if (parts.length < 2) return { street: cleaned, city: null, state: null, zipCode: null };
+
+  const lastPart = parts[parts.length - 1];
+
+  // Match "IL 60540" or "ILLINOIS 60540"
+  const stateZip = lastPart.match(/^([A-Za-z\s]+?)\s+(\d{5}(?:-\d{4})?)$/);
+  if (stateZip) {
+    const rawState = stateZip[1].trim();
+    const state = rawState.length === 2
+      ? rawState.toUpperCase()
+      : STATE_ABBREVS[rawState.toUpperCase()] || rawState.toUpperCase();
+    const city = parts.length >= 3 ? parts[parts.length - 2] : null;
+    const actualStreet = parts.length >= 3 ? parts.slice(0, -2).join(", ") : parts.slice(0, -1).join(", ");
+    return {
+      street: actualStreet || null,
+      city,
+      state,
+      zipCode: stateZip[2],
+    };
+  }
+
+  return { street: parts.slice(0, -1).join(", "), city: lastPart || null, state: null, zipCode: null };
+}
+
 function parseIntLoose(val: string | null): number | null {
   if (!val) return null;
   const cleaned = val.replace(/,/g, "").trim();
@@ -83,6 +138,7 @@ interface ImportPreview {
 interface ImportResult extends ImportPreview {
   created: number;
   skippedDuplicate: number;
+  updatedAddresses: number;
   errors: string[];
 }
 
@@ -275,13 +331,17 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 1. Load reference data (stages, org members) ──────────────────────
-    const [stages, orgMembers] = await Promise.all([
+    let [stages, orgMembers] = await Promise.all([
       prisma.leadStage.findMany({ where: { organizationId: orgId } }),
       prisma.organizationMember.findMany({
         where: { organizationId: orgId },
         include: { user: { select: { id: true, fullName: true } } },
       }),
     ]);
+
+    if (stages.length === 0) {
+      stages = await createDefaultStages(orgId);
+    }
 
     const stageMap = new Map(stages.map(s => [s.name, s]));
 
@@ -291,40 +351,57 @@ export async function POST(request: NextRequest) {
       return orgMembers.find(m => m.user.fullName.toLowerCase() === lower)?.user.id ?? null;
     }
 
-    // ── 2. Bulk-fetch existing emails + phone suffixes for dedup ──────────
-    const [existingEmailRecords, existingPhoneRecords] = await Promise.all([
-      prisma.contact.findMany({
-        where: { organizationId: orgId, email: { not: null } },
-        select: { email: true },
-      }),
-      prisma.contact.findMany({
-        where: { organizationId: orgId, phone: { not: null } },
-        select: { phone: true },
-      }),
-    ]);
+    // ── 2. Bulk-fetch existing contacts for dedup + backfill ──────────────
+    const existingContacts = await prisma.contact.findMany({
+      where: { organizationId: orgId },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        address: true,
+        city: true,
+        state: true,
+        zipCode: true,
+        stageId: true,
+      },
+    });
 
-    const existingEmails = new Set(
-      existingEmailRecords.map(r => r.email!.toLowerCase().trim())
-    );
-    const existingPhoneSuffixes = new Set(
-      existingPhoneRecords
-        .map(r => r.phone!.replace(/\D/g, ""))
-        .filter(d => d.length >= 7)
-        .map(d => d.slice(-7))
-    );
+    const existingByEmail = new Map<string, typeof existingContacts[number]>();
+    const existingByPhoneSuffix = new Map<string, typeof existingContacts[number]>();
+
+    for (const c of existingContacts) {
+      if (c.email) {
+        existingByEmail.set(c.email.toLowerCase().trim(), c);
+      }
+      if (c.phone) {
+        const digits = c.phone.replace(/\D/g, "");
+        if (digits.length >= 7) {
+          existingByPhoneSuffix.set(digits.slice(-7), c);
+        }
+      }
+    }
 
     // ── 3. Process rows in memory ─────────────────────────────────────────
     const result: ImportResult = {
       newLead: 0, claimProspect: 0, retailProspect: 0,
       seasonal: 0, notInterested: 0,
       skippedJunk: 0, skippedDeadFiltered: 0,
-      skippedDuplicate: 0, created: 0,
+      skippedDuplicate: 0, created: 0, updatedAddresses: 0,
       total: rows.length, errors: [],
     };
 
     const contactPayloads: Prisma.ContactCreateManyInput[] = [];
     const taskPayloads: Prisma.TaskCreateManyInput[] = [];
     const notePayloads: Prisma.NoteCreateManyInput[] = [];
+    const duplicateUpdates: {
+      id: string;
+      address: string | null;
+      city: string | null;
+      state: string | null;
+      zipCode: string | null;
+      stageId: string | null;
+      stageOrder: number;
+    }[] = [];
 
     const now = new Date();
 
@@ -362,22 +439,62 @@ export async function POST(request: NextRequest) {
         const phone = getVal(row, "Phone Number");
 
         // Dedup against DB + within-batch
+        let existingContact: typeof existingContacts[number] | undefined;
         if (email) {
           const lower = email.toLowerCase().trim();
-          if (existingEmails.has(lower) || seenEmailsThisBatch.has(lower)) {
+          if (seenEmailsThisBatch.has(lower)) {
             result.skippedDuplicate++;
             continue;
           }
+          existingContact = existingByEmail.get(lower);
         }
-        if (phone) {
+        if (!existingContact && phone) {
           const digits = phone.replace(/\D/g, "");
           if (digits.length >= 7) {
             const suffix = digits.slice(-7);
-            if (existingPhoneSuffixes.has(suffix) || seenPhoneSuffixesThisBatch.has(suffix)) {
+            if (seenPhoneSuffixesThisBatch.has(suffix)) {
               result.skippedDuplicate++;
               continue;
             }
+            existingContact = existingByPhoneSuffix.get(suffix);
           }
+        }
+
+        if (existingContact) {
+          let rowAddr = getVal(row, "Job: Location Street 1");
+          let rowCity = getVal(row, "Job: Location City");
+          let rowState = getVal(row, "Job: Location State");
+          let rowZip = getVal(row, "Job: Location Zip Code");
+          if (!rowAddr && !rowCity) {
+            const parsed = parseCombinedAddress(getVal(row, "Job: Location Address"));
+            rowAddr = parsed.street;
+            rowCity = parsed.city;
+            rowState = parsed.state;
+            rowZip = parsed.zipCode;
+          }
+
+          const stageRecord = stageMap.get(stageName);
+          const needsAddrUpdate =
+            (!existingContact.address && rowAddr) ||
+            (!existingContact.city && rowCity) ||
+            (!existingContact.state && rowState) ||
+            (!existingContact.zipCode && rowZip);
+          const needsStageUpdate = !existingContact.stageId && stageRecord;
+
+          if (needsAddrUpdate || needsStageUpdate) {
+            duplicateUpdates.push({
+              id: existingContact.id,
+              address: existingContact.address || rowAddr,
+              city: existingContact.city || rowCity,
+              state: existingContact.state || rowState,
+              zipCode: existingContact.zipCode || rowZip,
+              stageId: existingContact.stageId || stageRecord?.id || null,
+              stageOrder: stageRecord?.order ?? 0,
+            });
+            if (needsAddrUpdate) result.updatedAddresses++;
+          }
+          result.skippedDuplicate++;
+          continue;
         }
 
         // Mark as seen
@@ -392,10 +509,17 @@ export async function POST(request: NextRequest) {
         let lastName = getVal(row, "Primary Contact: Last Name") || "";
         lastName = fixDoubledLastName(lastName);
 
-        const address = getVal(row, "Job: Location Street 1");
-        const city = getVal(row, "Job: Location City");
-        const state = getVal(row, "Job: Location State");
-        const zipCode = getVal(row, "Job: Location Zip Code");
+        let address = getVal(row, "Job: Location Street 1");
+        let city = getVal(row, "Job: Location City");
+        let state = getVal(row, "Job: Location State");
+        let zipCode = getVal(row, "Job: Location Zip Code");
+        if (!address && !city) {
+          const parsed = parseCombinedAddress(getVal(row, "Job: Location Address"));
+          address = parsed.street;
+          city = parsed.city;
+          state = parsed.state;
+          zipCode = parsed.zipCode;
+        }
         const carrier = getVal(row, "Insurance Company");
         const claimNumber = getVal(row, "Claim Number");
         const dateOfLoss = parseDate(getVal(row, "Date of Loss"));
@@ -499,7 +623,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── 4. Batch insert everything (3 queries total) ──────────────────────
+    // ── 4. Batch insert new contacts + update existing addresses ─────────
     if (contactPayloads.length > 0) {
       await prisma.contact.createMany({ data: contactPayloads, skipDuplicates: true });
     }
@@ -510,13 +634,29 @@ export async function POST(request: NextRequest) {
       await prisma.note.createMany({ data: notePayloads, skipDuplicates: true });
     }
 
+    if (duplicateUpdates.length > 0) {
+      await prisma.$transaction(
+        duplicateUpdates.map((u) =>
+          prisma.contact.update({
+            where: { id: u.id },
+            data: {
+              address: u.address,
+              city: u.city,
+              state: u.state,
+              zipCode: u.zipCode,
+              stageId: u.stageId,
+              stageOrder: u.stageOrder,
+            },
+          })
+        )
+      );
+    }
+
     // Backfill tasks for any contacts in seasonal/not-interested stages that
     // were imported in a previous run (or moved manually) and are missing tasks.
     await checkContactsWithoutTasks(orgId);
 
-    revalidatePath("/contacts");
-    revalidatePath("/tasks");
-    revalidatePath("/dashboard");
+    revalidatePath("/", "layout");
 
     return NextResponse.json({ success: true, ...result, errors: result.errors.slice(0, 20) });
   } catch (error) {

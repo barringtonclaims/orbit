@@ -83,33 +83,51 @@ export async function GET(request: NextRequest) {
     return new Response("No organization found", { status: 400 });
   }
 
-  const contacts = await prisma.contact.findMany({
-    where: {
-      organizationId: membership.organizationId,
-      latitude: null,
-      OR: [
-        { address: { not: null } },
-        { city: { not: null } },
-        { zipCode: { not: null } },
-      ],
-    },
-    select: {
-      id: true,
-      address: true,
-      city: true,
-      state: true,
-      zipCode: true,
-    },
-  });
+  const orgId = membership.organizationId;
+
+  const [contacts, totalContacts, alreadyGeocoded] = await Promise.all([
+    prisma.contact.findMany({
+      where: {
+        organizationId: orgId,
+        latitude: null,
+        OR: [
+          { address: { not: null } },
+          { city: { not: null } },
+          { zipCode: { not: null } },
+        ],
+      },
+      select: {
+        id: true,
+        address: true,
+        city: true,
+        state: true,
+        zipCode: true,
+      },
+    }),
+    prisma.contact.count({ where: { organizationId: orgId } }),
+    prisma.contact.count({
+      where: { organizationId: orgId, latitude: { not: null } },
+    }),
+  ]);
 
   const total = contacts.length;
+  const noAddressCount = totalContacts - alreadyGeocoded - total;
 
   const stream = new ReadableStream({
     async start(controller) {
       const encode = (data: object) =>
         new TextEncoder().encode(sseEvent(data));
 
-      controller.enqueue(encode({ type: "start", total }));
+      controller.enqueue(
+        encode({
+          type: "start",
+          total,
+          orgId,
+          totalContacts,
+          alreadyGeocoded,
+          noAddressCount,
+        })
+      );
 
       let geocoded = 0;
       let failed = 0;

@@ -2,6 +2,8 @@ import { getCalendarEvents } from "@/lib/actions/calendar";
 import { CalendarView } from "@/components/calendar/calendar-view";
 import { Card } from "@/components/ui/card";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Calendar",
 };

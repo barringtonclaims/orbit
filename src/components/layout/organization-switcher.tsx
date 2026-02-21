@@ -79,8 +79,7 @@ export function OrganizationSwitcher({ currentOrg }: OrganizationSwitcherProps) 
         setIsLoading(false);
       } else {
         toast.success(`Switched to ${result.data?.name}`);
-        // Force a full page reload to ensure all data is fresh
-        window.location.href = "/dashboard";
+        window.location.reload();
       }
     } catch {
       toast.error("Failed to switch organization");

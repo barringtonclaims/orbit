@@ -42,6 +42,7 @@ interface ImportPreview {
 interface ImportResult extends ImportPreview {
   created: number;
   skippedDuplicate: number;
+  updatedAddresses: number;
   errors: string[];
 }
 
@@ -273,7 +274,8 @@ export function AccuLynxImportDialog({ open, onOpenChange, onComplete }: AccuLyn
 
             <p className="text-xs text-muted-foreground">
               Active leads (touched within 90 days) will get follow-up tasks.
-              Duplicates are automatically detected and skipped.
+              Duplicates are detected automatically — existing contacts with missing
+              addresses will be updated from the CSV.
             </p>
           </div>
         )}
@@ -315,6 +317,9 @@ export function AccuLynxImportDialog({ open, onOpenChange, onComplete }: AccuLyn
               <p className="text-lg font-semibold">Import Complete</p>
               <div className="mt-3 space-y-1.5 text-sm">
                 <p><strong>{result.created}</strong> contacts imported</p>
+                {result.updatedAddresses > 0 && (
+                  <p className="text-green-600">{result.updatedAddresses} existing contacts updated with addresses</p>
+                )}
                 {result.skippedDuplicate > 0 && (
                   <p className="text-muted-foreground">{result.skippedDuplicate} duplicates skipped</p>
                 )}

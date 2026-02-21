@@ -119,6 +119,9 @@ export function FenceView({
     total: number;
     geocoded: number;
     failed: number;
+    totalContacts?: number;
+    alreadyGeocoded?: number;
+    noAddressCount?: number;
   } | null>(null);
 
   // Determine the active polygon coordinates
@@ -300,14 +303,42 @@ export function FenceView({
           try {
             const event = JSON.parse(line.slice(6));
             if (event.type === "start") {
-              setGeocodeProgress({ current: 0, total: event.total, geocoded: 0, failed: 0 });
-            } else if (event.type === "progress") {
+              if (event.total === 0) {
+                const parts: string[] = [];
+                if (event.totalContacts === 0) {
+                  parts.push("No contacts found in this organization.");
+                } else {
+                  if (event.alreadyGeocoded > 0)
+                    parts.push(`${event.alreadyGeocoded} already geocoded`);
+                  if (event.noAddressCount > 0)
+                    parts.push(`${event.noAddressCount} have no address data`);
+                  if (parts.length === 0)
+                    parts.push("All contacts are already geocoded.");
+                }
+                toast.info(
+                  `Nothing to geocode. ${parts.join(", ")}. (${event.totalContacts} total contacts)`
+                );
+                setIsGeocoding(false);
+                setGeocodeProgress(null);
+                return;
+              }
               setGeocodeProgress({
+                current: 0,
+                total: event.total,
+                geocoded: 0,
+                failed: 0,
+                totalContacts: event.totalContacts,
+                alreadyGeocoded: event.alreadyGeocoded,
+                noAddressCount: event.noAddressCount,
+              });
+            } else if (event.type === "progress") {
+              setGeocodeProgress((prev) => ({
+                ...prev,
                 current: event.current,
                 total: event.total,
                 geocoded: event.geocoded,
                 failed: event.failed,
-              });
+              }));
             } else if (event.type === "done") {
               toast.success(
                 `Geocoded ${event.geocoded} of ${event.total} contacts${event.failed > 0 ? ` (${event.failed} failed)` : ""}`

@@ -187,13 +187,7 @@ export async function switchOrganization(organizationId: string) {
       data: { activeOrganizationId: organizationId },
     });
 
-    revalidatePath("/");
-    revalidatePath("/dashboard");
-    revalidatePath("/contacts");
-    revalidatePath("/tasks");
-    revalidatePath("/calendar");
-    revalidatePath("/settings");
-    revalidatePath("/team");
+    revalidatePath("/", "layout");
 
     return { 
       data: {

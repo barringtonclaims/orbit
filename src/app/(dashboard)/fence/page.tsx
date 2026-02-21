@@ -2,6 +2,8 @@ import { getFences, getGeocodedContacts, getTeamMembers } from "@/lib/actions/fe
 import { getLeadStages } from "@/lib/actions/stages";
 import { FenceView } from "@/components/fence/fence-view";
 
+export const dynamic = "force-dynamic";
+
 export default async function FencePage() {
   const [fencesResult, contactsResult, stagesResult, teamResult] =
     await Promise.all([
